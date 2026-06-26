@@ -57,6 +57,7 @@ import org.citra.citra_emu.utils.EmulationLifecycleUtil
 import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.FileBrowserHelper
 import org.citra.citra_emu.utils.FileUtil
+import org.citra.citra_emu.utils.GameHelper
 import org.citra.citra_emu.utils.Log
 import org.citra.citra_emu.utils.NetPlayManager
 import org.citra.citra_emu.utils.PermissionsHandler
@@ -133,6 +134,10 @@ class EmulationActivity : AppCompatActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
 
         super.onCreate(savedInstanceState)
+        if (maybeRedirectInstallableArchiveIntent(intent)) {
+            return
+        }
+
         NativeLibrary.initMultiplayer()
 
         secondaryDisplayManager = SecondaryDisplay(this)
@@ -169,15 +174,8 @@ class EmulationActivity : AppCompatActivity() {
         isEmulationRunning = true
         instance = this
 
-        val game = try {
-            intent.extras?.let { extras ->
-                BundleCompat.getParcelable(extras, "game", Game::class.java)
-            } ?: run {
-                Log.error("[EmulationActivity] Missing game data in intent extras")
-                return
-            }
-        } catch (e: Exception) {
-            Log.error("[EmulationActivity] Failed to retrieve game data: ${e.message}")
+        val game = resolveLaunchGame(intent) ?: run {
+            Log.error("[EmulationActivity] Missing game data in launch intent")
             return
         }
 
@@ -186,6 +184,10 @@ class EmulationActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (maybeRedirectInstallableArchiveIntent(intent)) {
+            return
+        }
+
         setIntent(intent)
 
         NativeLibrary.stopEmulation()
@@ -196,9 +198,7 @@ class EmulationActivity : AppCompatActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
         emulationViewModel.setEmulationStarted(false)
 
-        val game = intent.extras?.let { extras ->
-            BundleCompat.getParcelable(extras, "game", Game::class.java)
-        }
+        val game = resolveLaunchGame(intent)
         if (game != null) {
             NativeLibrary.playTimeManagerStart(game.titleId)
         }
@@ -206,6 +206,48 @@ class EmulationActivity : AppCompatActivity() {
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.fragment_container) as NavHostFragment
         navHostFragment.navController.setGraph(R.navigation.emulation_navigation, intent.extras)
+    }
+
+    private fun resolveLaunchGame(intent: Intent): Game? {
+        val bundledGame = try {
+            intent.extras?.let { extras ->
+                BundleCompat.getParcelable(extras, "game", Game::class.java)
+            }
+        } catch (e: Exception) {
+            Log.error("[EmulationActivity] Failed to retrieve game data from extras: ${e.message}")
+            null
+        }
+        if (bundledGame != null) {
+            return bundledGame
+        }
+
+        val gameUri = intent.data ?: return null
+        return runCatching {
+            GameHelper.getGame(
+                gameUri,
+                isInstalled = false,
+                addedToLibrary = false,
+                mediaType = Game.MediaType.GAME_CARD
+            )
+        }.onFailure { error ->
+            Log.error("[EmulationActivity] Failed to resolve game from intent Uri: ${error.message}")
+        }.getOrNull()
+    }
+
+    private fun maybeRedirectInstallableArchiveIntent(intent: Intent): Boolean {
+        if (intent.action != Intent.ACTION_VIEW) {
+            return false
+        }
+
+        val gameUri = intent.data ?: return false
+        val extension = runCatching { FileUtil.getExtension(gameUri) }.getOrNull() ?: return false
+        if (extension != "cia" && extension != "zcia") {
+            return false
+        }
+
+        startActivity(Intent(intent).setClass(this, MainActivity::class.java))
+        finish()
+        return true
     }
 
     // On some devices, the system bars will not disappear on first boot or after some

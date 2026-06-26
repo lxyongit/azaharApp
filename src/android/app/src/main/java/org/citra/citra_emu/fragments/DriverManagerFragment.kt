@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -25,6 +26,7 @@ import kotlinx.coroutines.launch
 import org.citra.citra_emu.R
 import org.citra.citra_emu.adapters.DriverAdapter
 import org.citra.citra_emu.databinding.FragmentDriverManagerBinding
+import org.citra.citra_emu.ui.main.MainActivity
 import org.citra.citra_emu.utils.FileUtil.inputStream
 import org.citra.citra_emu.utils.GpuDriverHelper
 import org.citra.citra_emu.viewmodel.DriverViewModel
@@ -57,6 +59,8 @@ class DriverManagerFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         homeViewModel.setNavigationVisibility(visible = false, animated = true)
         homeViewModel.setStatusBarShadeVisibility(visible = false)
+        val shouldFinishToCaller =
+            (activity as? MainActivity)?.shouldFinishAfterDriverManagerBack() == true
 
         if (!driverViewModel.isInteractionAllowed) {
             DriversLoadingDialogFragment().show(
@@ -66,7 +70,22 @@ class DriverManagerFragment : Fragment() {
         }
 
         binding.toolbarDrivers.setNavigationOnClickListener {
-            binding.root.findNavController().popBackStack()
+            if (shouldFinishToCaller) {
+                requireActivity().finish()
+            } else {
+                binding.root.findNavController().popBackStack()
+            }
+        }
+
+        if (shouldFinishToCaller) {
+            requireActivity().onBackPressedDispatcher.addCallback(
+                viewLifecycleOwner,
+                object : OnBackPressedCallback(true) {
+                    override fun handleOnBackPressed() {
+                        requireActivity().finish()
+                    }
+                }
+            )
         }
 
         binding.buttonInstall.setOnClickListener {

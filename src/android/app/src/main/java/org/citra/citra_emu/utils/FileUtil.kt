@@ -7,6 +7,7 @@ package org.citra.citra_emu.utils
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.system.Os
 import android.util.Pair
@@ -45,6 +46,18 @@ object FileUtil {
     fun createFile(directory: String, filename: String): DocumentFile? {
         try {
             val directoryUri = Uri.parse(directory)
+            val localDirectory = getLocalFile(directoryUri)
+            if (localDirectory != null) {
+                if (!localDirectory.exists() && !localDirectory.mkdirs()) {
+                    return null
+                }
+                val decodedFilename = URLDecoder.decode(filename, DECODE_METHOD)
+                val file = File(localDirectory, decodedFilename)
+                if (!file.exists() && !file.createNewFile()) {
+                    return null
+                }
+                return DocumentFile.fromFile(file)
+            }
             val parent = DocumentFile.fromTreeUri(context, directoryUri)
                 ?: return null
             val decodedFilename = URLDecoder.decode(filename, DECODE_METHOD)
@@ -79,6 +92,18 @@ object FileUtil {
     fun createDir(directory: String, directoryName: String): DocumentFile? {
         try {
             val directoryUri = Uri.parse(directory)
+            val localDirectory = getLocalFile(directoryUri)
+            if (localDirectory != null) {
+                if (!localDirectory.exists() && !localDirectory.mkdirs()) {
+                    return null
+                }
+                val decodedDirectoryName = URLDecoder.decode(directoryName, DECODE_METHOD)
+                val file = File(localDirectory, decodedDirectoryName)
+                if (!file.exists() && !file.mkdirs()) {
+                    return null
+                }
+                return DocumentFile.fromFile(file)
+            }
             val parent: DocumentFile =
                 DocumentFile.fromTreeUri(context, directoryUri)
                     ?: return null
@@ -101,6 +126,11 @@ object FileUtil {
     @JvmStatic
     fun openContentUri(path: String, openMode: String): Int {
         try {
+            val localFile = getLocalFile(path)
+            if (localFile != null) {
+                val descriptor = ParcelFileDescriptor.open(localFile, getParcelFileMode(openMode))
+                return descriptor.detachFd()
+            }
             context
                 .contentResolver
                 .openFileDescriptor(Uri.parse(path), openMode)
@@ -126,6 +156,22 @@ object FileUtil {
      */
     @JvmStatic
     fun listFiles(uri: Uri): Array<CheapDocument> {
+        val localDirectory = getLocalFile(uri)
+        if (localDirectory != null) {
+            val children = localDirectory.listFiles() ?: return emptyArray()
+            return children.map {
+                CheapDocument(
+                    it.name,
+                    if (it.isDirectory) {
+                        DocumentsContract.Document.MIME_TYPE_DIR
+                    } else {
+                        APPLICATION_OCTET_STREAM
+                    },
+                    Uri.parse(it.absolutePath)
+                )
+            }.toTypedArray()
+        }
+
         val columns = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -166,6 +212,11 @@ object FileUtil {
      */
     @JvmStatic
     fun exists(path: String): Boolean {
+        val localFile = getLocalFile(path)
+        if (localFile != null) {
+            return localFile.exists()
+        }
+
         var c: Cursor? = null
         try {
             val uri = Uri.parse(path)
@@ -194,6 +245,11 @@ object FileUtil {
      */
     @JvmStatic
     fun isDirectory(path: String): Boolean {
+        val localFile = getLocalFile(path)
+        if (localFile != null) {
+            return localFile.isDirectory
+        }
+
         val columns = arrayOf(DocumentsContract.Document.COLUMN_MIME_TYPE)
         var isDirectory = false
         var c: Cursor? = null
@@ -219,6 +275,11 @@ object FileUtil {
      */
     @JvmStatic
     fun getFilename(uri: Uri): String {
+        val localFile = getLocalFile(uri)
+        if (localFile != null) {
+            return localFile.name
+        }
+
         var filename = ""
         var c: Cursor? = null
         try {
@@ -266,6 +327,11 @@ object FileUtil {
      */
     @JvmStatic
     fun getFileSize(path: String): Long {
+        val localFile = getLocalFile(path)
+        if (localFile != null) {
+            return localFile.length()
+        }
+
         val columns = arrayOf(DocumentsContract.Document.COLUMN_SIZE)
         var size: Long = 0
         var c: Cursor? = null
@@ -548,6 +614,36 @@ object FileUtil {
             Log.error("[FileUtil] Cannot determine the string is native path or not.")
             false
         }
+
+    private fun getLocalFile(path: String): File? = getLocalFile(Uri.parse(path))
+
+    private fun getLocalFile(uri: Uri): File? {
+        val path = when {
+            uri.scheme == "file" -> uri.path
+            uri.scheme == null && uri.path?.startsWith("/") == true -> uri.path
+            else -> null
+        }
+
+        return path?.let(::File)
+    }
+
+    private fun getParcelFileMode(openMode: String): Int = when (openMode) {
+        "r" -> ParcelFileDescriptor.MODE_READ_ONLY
+        "w", "wt" ->
+            ParcelFileDescriptor.MODE_WRITE_ONLY or
+                ParcelFileDescriptor.MODE_CREATE or
+                ParcelFileDescriptor.MODE_TRUNCATE
+        "wa" ->
+            ParcelFileDescriptor.MODE_WRITE_ONLY or
+                ParcelFileDescriptor.MODE_CREATE or
+                ParcelFileDescriptor.MODE_APPEND
+        "rw" -> ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_CREATE
+        "rwt", "rwa" ->
+            ParcelFileDescriptor.MODE_READ_WRITE or
+                ParcelFileDescriptor.MODE_CREATE or
+                ParcelFileDescriptor.MODE_TRUNCATE
+        else -> ParcelFileDescriptor.MODE_READ_ONLY
+    }
 
     fun getFreeSpace(context: Context, uri: Uri?): Double = try {
         val docTreeUri = DocumentsContract.buildDocumentUriUsingTree(

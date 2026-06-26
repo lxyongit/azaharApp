@@ -665,10 +665,12 @@ ResultVal<std::size_t> CIAFile::WriteContentData(u64 offset, std::size_t length,
 	                    std::make_unique<NCCHCryptoFile>(content_file_paths[i], decryption_authorized);
 	                current_content_file->decryption_authorized = decryption_authorized;
 				}
-				else
-				{
-					content_files.emplace_back(content_file_paths[i], "wb");
-				}
+                else
+                {
+                    if (!content_files[i].IsOpen()) {
+                        content_files[i] = FileUtil::IOFile(content_file_paths[i], "wb");
+                    }
+                }
 
                 current_content_install_result.type = InstallResult::Type::APP;
                 current_content_install_result.install_full_path = content_file_paths[i];
@@ -822,6 +824,7 @@ Result CIAFile::ApplyContentPreparation(PreparedTitleMetadata&& prepared) {
     current_content_file.reset();
     current_content_index = -1;
     content_files.clear();
+    content_files.resize(content_count);
     content_file_paths = std::move(prepared.content_paths);
 
     if (tmd.HasEncryptedContent(from_cdn ? nullptr : container.GetHeader())) {

@@ -1004,9 +1004,18 @@ jlong Java_org_citra_citra_1emu_NativeLibrary_getTitleId(JNIEnv* env, [[maybe_un
     const auto loader = Loader::GetLoader(filepath);
 
     u64 title_id{};
+    Loader::ResultStatus result = Loader::ResultStatus::Error;
     if (loader) {
-        loader->ReadProgramId(title_id);
+        result = loader->ReadProgramId(title_id);
     }
+
+    if (result != Loader::ResultStatus::Success || title_id == 0) {
+        const auto meta_info = Service::AM::GetCIAInfos(filepath);
+        if (meta_info.Succeeded()) {
+            title_id = meta_info.Unwrap().first.tid;
+        }
+    }
+
     return static_cast<jlong>(title_id);
 }
 

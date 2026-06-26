@@ -20,7 +20,7 @@ plugins {
  * next 680 years.
  */
 val autoVersion = (((System.currentTimeMillis() / 1000) - 1451606400) / 10).toInt()
-val abiFilter = listOf("arm64-v8a", "x86_64")
+val abiFilter = listOf("arm64-v8a")
 
 val downloadedJniLibsPath = "${layout.buildDirectory.get().asFile.path}/downloadedJniLibs"
 
@@ -63,7 +63,8 @@ android {
         // The application ID refers to Lime3DS to allow for
         // the Play Store listing, which was originally set up for Lime3DS, to still be used.
         // applicationId = "org.azahar_emu.azahar"
-        applicationId = "io.github.lime3ds.android"
+        // applicationId = "io.github.lime3ds.android"
+        applicationId = "com.gzhuaiyun.azaharplus"
 
         minSdk = 28
         targetSdk = 35
@@ -127,8 +128,8 @@ android {
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         register("relWithDebInfo") {
             initWith(getByName("release"))
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // applicationIdSuffix = ".debug"
+            // versionNameSuffix = "-debug"
             signingConfig = signingConfigs.getByName("debug")
             isShrinkResources = true
             // TODO: ^- Does this actually do anything when isDebuggable is enabled? -OS
@@ -163,8 +164,8 @@ android {
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
             // TODO If this is ever modified, change application_id in debug/strings.xml
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // applicationIdSuffix = ".debug"
+            // versionNameSuffix = "-debug"
             isDebuggable = true
             isJniDebuggable = true
         }

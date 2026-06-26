@@ -8,9 +8,14 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedReader
+import java.io.File
 import java.io.FileNotFoundException
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.OutputStream
 import java.util.TreeMap
 import org.citra.citra_emu.CitraApplication
 import org.citra.citra_emu.R
@@ -26,6 +31,7 @@ import org.citra.citra_emu.features.settings.model.StringSetting
 import org.citra.citra_emu.features.settings.ui.SettingsActivityView
 import org.citra.citra_emu.utils.BiMap
 import org.citra.citra_emu.utils.DirectoryInitialization.userDirectory
+import org.citra.citra_emu.utils.FileUtil
 import org.citra.citra_emu.utils.Log
 import org.ini4j.Wini
 
@@ -55,8 +61,7 @@ object SettingsFile {
         val sections: HashMap<String, SettingSection?> = SettingsSectionMap()
         var reader: BufferedReader? = null
         try {
-            val context: Context = CitraApplication.appContext
-            val inputStream = context.contentResolver.openInputStream(ini.uri)
+            val inputStream = openInputStream(ini)
             reader = BufferedReader(InputStreamReader(inputStream))
             var current: SettingSection? = null
             var line: String?
@@ -122,8 +127,7 @@ object SettingsFile {
     ) {
         val ini = getSettingsFile(fileName)
         try {
-            val context: Context = CitraApplication.appContext
-            val inputStream = context.contentResolver.openInputStream(ini.uri)
+            val inputStream = openInputStream(ini)
             val writer = Wini(inputStream)
             val keySet: Set<String> = sections.keys
             for (key in keySet) {
@@ -131,7 +135,7 @@ object SettingsFile {
                 writeSection(writer, section!!)
             }
             inputStream!!.close()
-            val outputStream = context.contentResolver.openOutputStream(ini.uri, "wt")
+            val outputStream = openOutputStream(ini)
             writer.store(outputStream)
             outputStream!!.flush()
             outputStream.close()
@@ -148,12 +152,11 @@ object SettingsFile {
     fun saveFile(fileName: String, setting: AbstractSetting) {
         val ini = getSettingsFile(fileName)
         try {
-            val context: Context = CitraApplication.appContext
-            val inputStream = context.contentResolver.openInputStream(ini.uri)
+            val inputStream = openInputStream(ini)
             val writer = Wini(inputStream)
             writer.put(setting.section, setting.key, setting.valueAsString)
             inputStream!!.close()
-            val outputStream = context.contentResolver.openOutputStream(ini.uri, "wt")
+            val outputStream = openOutputStream(ini)
             writer.store(outputStream)
             outputStream!!.flush()
             outputStream.close()
@@ -177,15 +180,53 @@ object SettingsFile {
         }
 
     fun getSettingsFile(fileName: String): DocumentFile {
-        val root = DocumentFile.fromTreeUri(CitraApplication.appContext, Uri.parse(userDirectory))
-        val configDirectory = root!!.findFile("config")
-        return configDirectory!!.findFile("$fileName.ini")!!
+        val root = getUserDirectoryRoot()
+        val configDirectory = root.findFile("config")
+            ?: throw IllegalStateException("Config directory not found")
+        return configDirectory.findFile("$fileName.ini")
+            ?: DocumentFile.fromFile(File(resolveDocumentPath(configDirectory), "$fileName.ini"))
     }
 
     private fun getCustomGameSettingsFile(gameId: String): DocumentFile {
-        val root = DocumentFile.fromTreeUri(CitraApplication.appContext, Uri.parse(userDirectory))
-        val configDirectory = root!!.findFile("GameSettings")
-        return configDirectory!!.findFile("$gameId.ini")!!
+        val root = getUserDirectoryRoot()
+        val configDirectory = root.findFile("GameSettings")
+            ?: throw IllegalStateException("GameSettings directory not found")
+        return configDirectory.findFile("$gameId.ini")
+            ?: DocumentFile.fromFile(File(resolveDocumentPath(configDirectory), "$gameId.ini"))
+    }
+
+    private fun getUserDirectoryRoot(): DocumentFile {
+        val directory = userDirectory ?: throw IllegalStateException("User directory unavailable")
+        return if (FileUtil.isNativePath(directory)) {
+            DocumentFile.fromFile(File(directory))
+        } else {
+            DocumentFile.fromTreeUri(CitraApplication.appContext, Uri.parse(directory))
+                ?: throw IllegalArgumentException("Invalid user directory URI: $directory")
+        }
+    }
+
+    private fun openInputStream(document: DocumentFile): InputStream? {
+        return if (document.uri.scheme == "file") {
+            FileInputStream(File(requireNotNull(document.uri.path)))
+        } else {
+            val context: Context = CitraApplication.appContext
+            context.contentResolver.openInputStream(document.uri)
+        }
+    }
+
+    private fun openOutputStream(document: DocumentFile): OutputStream? {
+        return if (document.uri.scheme == "file") {
+            FileOutputStream(File(requireNotNull(document.uri.path)), false)
+        } else {
+            val context: Context = CitraApplication.appContext
+            context.contentResolver.openOutputStream(document.uri, "wt")
+        }
+    }
+
+    private fun resolveDocumentPath(document: DocumentFile): String {
+        return requireNotNull(document.uri.path) {
+            "Document path unavailable: ${document.uri}"
+        }
     }
 
     private fun sectionFromLine(line: String, isCustomGame: Boolean): SettingSection {
