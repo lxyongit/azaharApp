@@ -233,7 +233,7 @@ public:
         return install_results;
     }
 
-    void AuthorizeDecryptionFromHLE();
+    void AuthorizeDecryptionFromHLE(bool allow_plaintext_decryption = false);
 
 private:
     friend void AuthorizeCIAFileDecryption(CIAFile* cia_file, Kernel::HLERequestContext& ctx);
@@ -243,6 +243,7 @@ private:
     // Sections (tik, tmd, contents) are being imported individually
     bool from_cdn;
     bool decryption_authorized;
+    bool allow_plaintext_decryption = false;
     bool is_done = false;
     bool is_closed = false;
     bool is_cancel = false;
@@ -372,10 +373,12 @@ private:
  * Installs a CIA file from a specified file path.
  * @param path file path of the CIA file to install
  * @param update_callback callback function called during filesystem write
+ * @param allow_plaintext_decryption whether decrypted contents may be stored as plaintext
  * @returns bool whether the install was successful
  */
 InstallStatus InstallCIA(const std::string& path,
-                         std::function<ProgressCallback>&& update_callback = nullptr);
+                         std::function<ProgressCallback>&& update_callback = nullptr,
+                         bool allow_plaintext_decryption = false);
 
 /**
  * Checks if the provided path is a valid CIA file

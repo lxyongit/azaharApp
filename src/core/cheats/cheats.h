@@ -38,6 +38,9 @@ public:
     /// Adds a cheat to the cheat engine.
     void AddCheat(std::shared_ptr<CheatBase>&& cheat);
 
+    /// Adds a cheat to the beginning of the cheat list.
+    void AddCheatAtBeginning(std::shared_ptr<CheatBase>&& cheat);
+
     /// Removes a cheat at the specified index in the cheats list.
     void RemoveCheat(std::size_t index);
 

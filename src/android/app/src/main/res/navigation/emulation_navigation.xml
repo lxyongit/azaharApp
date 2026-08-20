@@ -25,6 +25,10 @@
             android:name="titleId"
             app:argType="long"
             android:defaultValue="-1L" />
+        <argument
+            android:name="romPath"
+            app:argType="string"
+            android:defaultValue="" />
     </activity>
 
     <action

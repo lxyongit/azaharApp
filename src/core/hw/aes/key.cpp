@@ -3,8 +3,10 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <exception>
 #include <optional>
 #include <sstream>
+#include <string_view>
 #include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <cryptopp/aes.h>
@@ -81,13 +83,26 @@ std::optional<std::pair<std::size_t, std::string>> ParseNfcSecretName(
 }
 
 std::optional<std::pair<std::size_t, char>> ParseKeySlotName(const std::string& full_name) {
-    std::size_t slot;
-    char type;
-    int end;
-    if (std::sscanf(full_name.c_str(), "slot0x%zXKey%c%n", &slot, &type, &end) == 2 &&
-        end == static_cast<int>(full_name.size())) {
-        return std::make_pair(slot, type);
-    } else {
+    constexpr std::string_view prefix{"slot0x"};
+    if (!full_name.starts_with(prefix)) {
+        return std::nullopt;
+    }
+
+    const std::size_t key_pos = full_name.find("Key", prefix.size());
+    if (key_pos == std::string::npos || key_pos == prefix.size() ||
+        key_pos + 4 != full_name.size()) {
+        return std::nullopt;
+    }
+
+    try {
+        std::size_t parsed = 0;
+        const auto slot = std::stoull(full_name.substr(prefix.size(), key_pos - prefix.size()),
+                                      &parsed, 16);
+        if (parsed != key_pos - prefix.size()) {
+            return std::nullopt;
+        }
+        return std::make_pair(static_cast<std::size_t>(slot), full_name[key_pos + 3]);
+    } catch (const std::exception&) {
         return std::nullopt;
     }
 }
@@ -152,10 +167,16 @@ void LoadPresetKeys() {
     auto s = GetKeysStream();
 
     std::string mode = "";
+    std::size_t line_number = 0;
+    std::size_t parsed_aes_entries = 0;
+    std::size_t loaded_slot_entries = 0;
+    bool legacy_format_logged = false;
 
     while (!s.eof()) {
         std::string line;
         std::getline(s, line);
+        ++line_number;
+        line = Common::StripSpaces(line);
 
         // Ignore empty or commented lines.
         if (line.empty() || line.starts_with("#")) {
@@ -167,29 +188,38 @@ void LoadPresetKeys() {
             continue;
         }
 
-        if (mode != "AES") {
+        // Original Citra aes_keys.txt files do not have a ':AES' section header. Treat entries
+        // before the first section as AES entries while retaining support for the current format.
+        if (!mode.empty() && mode != "AES") {
             continue;
+        }
+        if (mode.empty() && !legacy_format_logged) {
+            LOG_INFO(HW_AES,
+                     "[NCCH-CRYPTO] No section header found; using legacy aes_keys.txt format");
+            legacy_format_logged = true;
         }
 
         const auto parts = Common::SplitString(line, '=');
         if (parts.size() != 2) {
-            LOG_ERROR(HW_AES, "Failed to parse {}", line);
+            LOG_ERROR(HW_AES, "[NCCH-CRYPTO] Failed to parse AES key entry at line {}",
+                      line_number);
             continue;
         }
 
-        const std::string& name = parts[0];
+        const std::string name = Common::StripSpaces(parts[0]);
+        const std::string value = Common::StripSpaces(parts[1]);
 
         const auto nfc_secret = ParseNfcSecretName(name);
         if (nfc_secret) {
-            auto value = HexToVector(parts[1]);
+            auto secret_value = HexToVector(value);
             if (nfc_secret->first >= nfc_secrets.size()) {
                 LOG_ERROR(HW_AES, "Invalid NFC secret index {}", nfc_secret->first);
             } else if (nfc_secret->second == "Phrase") {
-                nfc_secrets[nfc_secret->first].phrase = value;
+                nfc_secrets[nfc_secret->first].phrase = secret_value;
             } else if (nfc_secret->second == "Seed") {
-                nfc_secrets[nfc_secret->first].seed = value;
+                nfc_secrets[nfc_secret->first].seed = secret_value;
             } else if (nfc_secret->second == "HmacKey") {
-                nfc_secrets[nfc_secret->first].hmac_key = value;
+                nfc_secrets[nfc_secret->first].hmac_key = secret_value;
             } else {
                 LOG_ERROR(HW_AES, "Invalid NFC secret '{}'", name);
             }
@@ -198,13 +228,19 @@ void LoadPresetKeys() {
 
         AESKey key;
         try {
-            key = HexToKey(parts[1]);
+            key = HexToKey(value);
         } catch (const std::logic_error& e) {
-            LOG_ERROR(HW_AES, "Invalid key {}: {}", parts[1], e.what());
+            LOG_ERROR(HW_AES, "[NCCH-CRYPTO] Invalid key material for '{}': {}", name,
+                      e.what());
             continue;
         }
+        ++parsed_aes_entries;
 
-        const auto common_key = ParseCommonKeyName(name);
+        auto common_key = ParseCommonKeyName(name);
+        if (!common_key && name.ends_with('N')) {
+            // Legacy aes_keys.txt denotes a normal common key as common<N>N.
+            common_key = ParseCommonKeyName(name.substr(0, name.size() - 1));
+        }
         if (common_key) {
             if (common_key >= common_key_y_slots.size()) {
                 LOG_ERROR(HW_AES, "Invalid common key index {}", common_key.value());
@@ -214,7 +250,7 @@ void LoadPresetKeys() {
             continue;
         }
 
-        if (name == "generatorConstant") {
+        if (name == "generatorConstant" || name == "generator") {
             generator_constant = key;
             continue;
         }
@@ -273,25 +309,44 @@ void LoadPresetKeys() {
         switch (key_slot->second) {
         case 'X':
             key_slots.at(key_slot->first).SetKeyX(key);
+            ++loaded_slot_entries;
             break;
         case 'Y':
             key_slots.at(key_slot->first).SetKeyY(key);
+            ++loaded_slot_entries;
             break;
         case 'N':
             key_slots.at(key_slot->first).SetNormalKey(key);
+            ++loaded_slot_entries;
             break;
         default:
             LOG_ERROR(HW_AES, "Invalid key type '{}'", key_slot->second);
             break;
         }
     }
+
+    LOG_INFO(HW_AES, "[NCCH-CRYPTO] Parsed {} AES entries; loaded {} key-slot entries",
+             parsed_aes_entries, loaded_slot_entries);
 }
 
 } // namespace
 
 std::istringstream GetKeysStream() {
-    const std::string filepath = FileUtil::GetUserPath(FileUtil::UserPath::SysDataDir) + KEYS_FILE;
+    const std::string sysdata_path = FileUtil::GetUserPath(FileUtil::UserPath::SysDataDir);
+    const std::string default_path = sysdata_path + KEYS_FILE;
+    // Citra-compatible installations traditionally use aes_keys.txt. Prefer a non-empty current
+    // file when both are present, but preserve compatibility with existing user directories.
+    const std::string filepath =
+        FileUtil::Exists(default_path) && FileUtil::GetSize(default_path) > 0
+            ? default_path
+            : sysdata_path + "aes_keys.txt";
     FileUtil::CreateFullPath(filepath); // Create path if not already created
+    const bool key_file_exists = FileUtil::Exists(filepath);
+    const u64 key_file_size = key_file_exists ? FileUtil::GetSize(filepath) : 0;
+
+    LOG_INFO(HW_AES,
+             "[NCCH-CRYPTO] Key source: sysdata='{}', selected='{}', exists={}, bytes={}",
+             sysdata_path, filepath, key_file_exists, key_file_size);
 
     boost::iostreams::stream<boost::iostreams::file_descriptor_source> file;
     FileUtil::OpenFStream<std::ios_base::in>(file, filepath);
@@ -299,6 +354,7 @@ std::istringstream GetKeysStream() {
     if (file.is_open()) {
         return std::istringstream(std::string(std::istreambuf_iterator<char>(file), {}));
     } else {
+        LOG_ERROR(HW_AES, "[NCCH-CRYPTO] Could not open selected key source '{}'.", filepath);
 #ifdef ENABLE_BUILTIN_KEYBLOB
         // The key data is encrypted in the source to prevent easy access to it for unintended
         // purposes.

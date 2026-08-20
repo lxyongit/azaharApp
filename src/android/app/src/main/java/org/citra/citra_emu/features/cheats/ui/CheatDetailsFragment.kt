@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import org.citra.citra_emu.R
 import org.citra.citra_emu.databinding.FragmentCheatDetailsBinding
 import org.citra.citra_emu.features.cheats.model.Cheat
+import org.citra.citra_emu.features.cheats.model.CheatMetadata
 import org.citra.citra_emu.features.cheats.model.CheatsViewModel
 
 class CheatDetailsFragment : Fragment() {
@@ -150,7 +151,7 @@ class CheatDetailsFragment : Fragment() {
                 binding.editCodeInput.setText("")
             } else {
                 binding.editNameInput.setText(cheat.getName())
-                binding.editNotesInput.setText(cheat.getNotes())
+                binding.editNotesInput.setText(CheatMetadata.visibleNotes(cheat.getNotes()))
                 binding.editCodeInput.setText(cheat.getCode())
             }
         }

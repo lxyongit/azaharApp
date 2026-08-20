@@ -1111,4 +1111,12 @@
     <string name="update_check_channel_stable">Stable</string>
     <string name="update_check_channel_prerelease">Prerelease</string>
 
+    <string name="game_information">Game Information</string>
+    <string name="game_information_not_loaded">Unable to load game information.</string>
+    <string name="game_information_playtime">Playtime: %1$s</string>
+    <string name="game_information_delete_confirmation">Delete the installed game content? This cannot be undone.</string>
+    <string name="game_information_deleted">Installed game content deleted.</string>
+    <string name="game_information_delete_failed">Unable to delete installed game content.</string>
+    <string name="game_information_delete_unavailable">Only installed game content can be deleted here.</string>
+    <string name="game_information_compress_unavailable">Compression is unavailable for this shared game file.</string>
 </resources>

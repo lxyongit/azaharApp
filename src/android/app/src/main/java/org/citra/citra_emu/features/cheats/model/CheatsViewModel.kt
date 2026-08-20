@@ -5,10 +5,34 @@
 package org.citra.citra_emu.features.cheats.model
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.citra.citra_emu.utils.Log
+import java.util.concurrent.ConcurrentHashMap
 
 class CheatsViewModel : ViewModel() {
+    sealed interface FetchState {
+        data object Idle : FetchState
+        data object Loading : FetchState
+        data class Success(
+            val cheats: List<FetchedCheat>,
+            val loadedFromServer: Boolean
+        ) : FetchState
+        data class Error(val message: String) : FetchState
+    }
+
+    val fetchState get() = _fetchState.asStateFlow()
+    private val _fetchState = MutableStateFlow<FetchState>(FetchState.Idle)
+
+    val cheatsReloadedEvent get() = _cheatsReloadedEvent.asSharedFlow()
+    private val _cheatsReloadedEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
     val selectedCheat get() = _selectedCheat.asStateFlow()
     private val _selectedCheat = MutableStateFlow<Cheat?>(null)
 
@@ -48,14 +72,124 @@ class CheatsViewModel : ViewModel() {
     private val _detailsViewFocusChange = MutableStateFlow(false)
 
     private var titleId: Long = 0
+    private var romPath: String = ""
+    private var fetchStarted = false
     lateinit var cheats: Array<Cheat>
     private var cheatsNeedSaving = false
     private var selectedCheatPosition = -1
 
-    fun initialize(titleId_: Long) {
-        titleId = titleId_
-        load()
+    private data class FetchKey(val titleId: Long, val romPath: String)
+
+    companion object {
+        // Keeps separate cheat pages in the same app process from requesting the same game again.
+        private val fetchedCheatsCache = ConcurrentHashMap<FetchKey, List<FetchedCheat>>()
     }
+
+    fun initialize(titleId_: Long, romPath_: String) {
+        val gameChanged = titleId != titleId_ || romPath != romPath_
+        titleId = titleId_
+        romPath = romPath_
+        Log.info("[APILOG][CheatsViewModel] initialize titleId=$titleId romPath=$romPath")
+        load()
+        if (gameChanged || !fetchStarted) {
+            fetchStarted = true
+            fetchCheats()
+        }
+    }
+
+    fun fetchCheats() {
+        if (_fetchState.value is FetchState.Loading) return
+        if (titleId <= 0L || romPath.isBlank()) {
+            Log.error(
+                "[APILOG][CheatsViewModel] fetch skipped invalid titleId=$titleId romPath=$romPath"
+            )
+            _fetchState.value = FetchState.Error("The game ID or ROM path is unavailable")
+            return
+        }
+
+        fetchedCheatsCache[FetchKey(titleId, romPath)]?.let { cachedCheats ->
+            Log.info(
+                "[APILOG][CheatsViewModel] fetch cache hit titleId=$titleId " +
+                    "romPath=$romPath count=${cachedCheats.size}"
+            )
+            // The file already contains the server section. A cache hit must not rebuild it,
+            // otherwise enabled states and manual changes would be replaced unnecessarily.
+            _fetchState.value = FetchState.Success(cachedCheats, loadedFromServer = false)
+            return
+        }
+
+        _fetchState.value = FetchState.Loading
+        viewModelScope.launch {
+            _fetchState.value = try {
+                val fetched = withContext(Dispatchers.IO) {
+                    CheatServer.fetch(titleId, romPath)
+                }
+                fetchedCheatsCache[FetchKey(titleId, romPath)] = fetched
+                Log.info("[APILOG][CheatsViewModel] fetch completed count=${fetched.size}")
+                FetchState.Success(fetched, loadedFromServer = true)
+            } catch (exception: Exception) {
+                Log.error(
+                    "[APILOG][CheatsViewModel] fetch failed " +
+                        "${exception::class.simpleName}: ${exception.message}"
+                )
+                FetchState.Error(exception.message ?: "Unable to fetch cheats")
+            }
+        }
+    }
+
+    fun clearFetchState() {
+        _fetchState.value = FetchState.Idle
+    }
+
+    fun importFetchedCheats(fetchedCheats: List<FetchedCheat>) {
+        val currentCheats = cheats.toList()
+        val fetchedKeys = fetchedCheats.map { cheatKey(it.name, it.code) }.toSet()
+        val serverEnabledStates = currentCheats
+            .filter { cheat ->
+                val origin = CheatMetadata.getOrigin(cheat.getNotes())
+                origin == CheatMetadata.SERVER_ORIGIN ||
+                    (origin == null && cheatKey(cheat.getName(), cheat.getCode()) in fetchedKeys)
+            }
+            .associate { cheatKey(it.getName(), it.getCode()) to it.getEnabled() }
+        val manualCheats = currentCheats.filter {
+            CheatMetadata.getOrigin(it.getNotes()) == CheatMetadata.MANUAL_ORIGIN
+        }
+        val oldServerCheats = currentCheats.filter { cheat ->
+            val origin = CheatMetadata.getOrigin(cheat.getNotes())
+            origin == CheatMetadata.SERVER_ORIGIN ||
+                (origin == null && cheatKey(cheat.getName(), cheat.getCode()) in fetchedKeys)
+        }
+        val publicCheats = currentCheats.filter { cheat ->
+            cheat !in manualCheats && cheat !in oldServerCheats
+        }
+        val serverCheats = fetchedCheats.map { fetched ->
+            val serverCheat = Cheat.createGatewayCode(
+                fetched.name,
+                CheatMetadata.SERVER_ORIGIN,
+                fetched.code
+            )
+            serverEnabledStates[cheatKey(fetched.name, fetched.code)]?.let { enabled ->
+                serverCheat.setEnabled(enabled)
+            }
+            serverCheat
+        }
+        Log.info(
+            "[APILOG][CheatsViewModel] import received=${fetchedCheats.size} " +
+                "manual=${manualCheats.size} removedServer=${oldServerCheats.size} " +
+                "public=${publicCheats.size}"
+        )
+
+        // Keep the file in three logical sections: manual, local server, public.
+        val orderedCheats = manualCheats + serverCheats + publicCheats
+        currentCheats.indices.reversed().forEach { index -> CheatEngine.removeCheat(index) }
+        orderedCheats.forEach { CheatEngine.addCheat(it) }
+        load()
+        cheatsNeedSaving = true
+        _cheatsReloadedEvent.tryEmit(Unit)
+    }
+
+    private fun cheatKey(name: String, code: String): Pair<String, String> =
+        name.trim() to code.trim()
 
     private fun load() {
         CheatEngine.loadCheatFile(titleId)
@@ -107,12 +241,18 @@ class CheatsViewModel : ViewModel() {
         check(isAdding.value)
         _isAdding.value = false
         _isEditing.value = false
-        val position = cheats.size
-        CheatEngine.addCheat(cheat)
+        val manualCheat = cheat?.let {
+            Cheat.createGatewayCode(
+                it.getName(),
+                CheatMetadata.withOrigin(it.getNotes(), CheatMetadata.MANUAL_ORIGIN),
+                it.getCode()
+            )
+        }
+        CheatEngine.prependCheat(manualCheat)
         cheatsNeedSaving = true
         load()
-        notifyCheatAdded(position)
-        setSelectedCheat(cheats[position], position)
+        notifyCheatAdded(0)
+        setSelectedCheat(cheats[0], 0)
     }
 
     /**
@@ -124,7 +264,14 @@ class CheatsViewModel : ViewModel() {
     }
 
     fun updateSelectedCheat(newCheat: Cheat?) {
-        CheatEngine.updateCheat(selectedCheatPosition, newCheat)
+        val manualCheat = newCheat?.let {
+            Cheat.createGatewayCode(
+                it.getName(),
+                CheatMetadata.withOrigin(it.getNotes(), CheatMetadata.MANUAL_ORIGIN),
+                it.getCode()
+            )
+        }
+        CheatEngine.updateCheat(selectedCheatPosition, manualCheat)
         cheatsNeedSaving = true
         load()
         notifyCheatUpdated(selectedCheatPosition)

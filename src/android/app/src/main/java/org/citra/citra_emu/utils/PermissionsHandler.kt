@@ -4,16 +4,21 @@
 
 package org.citra.citra_emu.utils
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.activity.result.ActivityResultLauncher
+import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
 import org.citra.citra_emu.CitraApplication
+import java.io.File
 
 object PermissionsHandler {
     const val CITRA_DIRECTORY = "CITRA_DIRECTORY"
@@ -22,8 +27,17 @@ object PermissionsHandler {
 
     fun hasWriteAccess(context: Context): Boolean {
         try {
-            if (citraDirectory.toString().isEmpty()) {
+            val directoryString = preferences.getString(CITRA_DIRECTORY, "").orEmpty()
+            if (directoryString.isEmpty()) {
                 return false
+            }
+
+            if (FileUtil.isNativePath(directoryString)) {
+                if (!hasNativeFilesystemAccess(context)) {
+                    return false
+                }
+                val directory = File(directoryString)
+                return directory.exists() && directory.isDirectory
             }
 
             val uri = citraDirectory
@@ -64,6 +78,17 @@ object PermissionsHandler {
                 "primary"
             )
             activityLauncher.launch(initialUri)
+        }
+    }
+
+    private fun hasNativeFilesystemAccess(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
         }
     }
 }

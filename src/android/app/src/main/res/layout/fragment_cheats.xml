@@ -1,26 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.slidingpanelayout.widget.SlidingPaneLayout
+<FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/sliding_pane_layout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:layout_height="match_parent">
 
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/cheat_list_container"
-        android:name="org.citra.citra_emu.features.cheats.ui.CheatListFragment"
+    <androidx.slidingpanelayout.widget.SlidingPaneLayout
+        android:id="@+id/sliding_pane_layout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_weight="1"
-        tools:layout="@layout/fragment_cheat_list" />
+        android:background="?attr/colorSurface">
 
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/cheat_details_container"
-        android:name="org.citra.citra_emu.features.cheats.ui.CheatDetailsFragment"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        tools:layout="@layout/fragment_cheat_details" />
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/cheat_list_container"
+            android:name="org.citra.citra_emu.features.cheats.ui.CheatListFragment"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            tools:layout="@layout/fragment_cheat_list" />
 
-</androidx.slidingpanelayout.widget.SlidingPaneLayout>
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/cheat_details_container"
+            android:name="org.citra.citra_emu.features.cheats.ui.CheatDetailsFragment"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            tools:layout="@layout/fragment_cheat_details" />
+
+    </androidx.slidingpanelayout.widget.SlidingPaneLayout>
+
+    <ProgressBar
+        android:id="@+id/cheats_loading"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        android:elevation="8dp"
+        android:importantForAccessibility="no" />
+
+</FrameLayout>

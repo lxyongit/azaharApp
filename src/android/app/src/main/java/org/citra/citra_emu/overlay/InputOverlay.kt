@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.preference.PreferenceManager
 import java.lang.NullPointerException
+import kotlin.math.max
 import kotlin.math.min
 import org.citra.citra_emu.CitraApplication
 import org.citra.citra_emu.NativeLibrary
@@ -59,6 +60,7 @@ class InputOverlay(context: Context?, attrs: AttributeSet?) :
         if (!preferences.getBoolean("OverlayInit", false)) {
             defaultOverlay()
         }
+        migrateOverlayPositionsIfNeeded()
 
         // Reset 3ds touchscreen pointer ID
         touchscreenPointerId = -1
@@ -81,6 +83,15 @@ class InputOverlay(context: Context?, attrs: AttributeSet?) :
         overlayButtons.forEach { it.draw(canvas) }
         overlayDpads.forEach { it.draw(canvas) }
         overlayJoysticks.forEach { it.draw(canvas) }
+    }
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        if (width > 0 && height > 0 && (width != oldWidth || height != oldHeight)) {
+            // Positions are stored against display metrics, which can include
+            // system bars. Recreate controls against this view's real bounds.
+            refreshControls()
+        }
     }
 
     private fun swapScreen() {
@@ -636,8 +647,36 @@ class InputOverlay(context: Context?, attrs: AttributeSet?) :
         // Add all the enabled overlay items back to the HashSet.
         if (EmulationMenuSettings.showOverlay) {
             addOverlayControls(orientation)
+            clampOverlayControlsToView()
         }
         invalidate()
+    }
+
+    private fun clampOverlayControlsToView() {
+        if (width <= 0 || height <= 0) {
+            return
+        }
+
+        fun clampPosition(position: Int, itemSize: Int, viewSize: Int): Int =
+            position.coerceIn(0, (viewSize - itemSize).coerceAtLeast(0))
+
+        overlayButtons.forEach { button ->
+            val x = clampPosition(button.bounds.left, button.width, width)
+            val y = clampPosition(button.bounds.top, button.height, height)
+            button.setBounds(x, y, x + button.width, y + button.height)
+            button.setPosition(x, y)
+        }
+        overlayDpads.forEach { dpad ->
+            val x = clampPosition(dpad.bounds.left, dpad.width, width)
+            val y = clampPosition(dpad.bounds.top, dpad.height, height)
+            dpad.setBounds(x, y, x + dpad.width, y + dpad.height)
+            dpad.setPosition(x, y)
+        }
+        overlayJoysticks.forEach { joystick ->
+            val x = clampPosition(joystick.bounds.left, joystick.bounds.width(), width)
+            val y = clampPosition(joystick.bounds.top, joystick.bounds.height(), height)
+            joystick.setPositionAndBounds(x, y)
+        }
     }
 
     private fun saveControlPosition(sharedPrefsId: Int, x: Int, y: Int, orientation: String) {
@@ -674,7 +713,74 @@ class InputOverlay(context: Context?, attrs: AttributeSet?) :
 
         preferences.edit()
             .putBoolean("OverlayInit", true)
+            .putInt(OVERLAY_PLACEMENT_VERSION_KEY, OVERLAY_PLACEMENT_VERSION)
             .apply()
+    }
+
+    /** Moves existing default controls into the revised safe-area layout once. */
+    private fun migrateOverlayPositionsIfNeeded() {
+        if (preferences.getInt(OVERLAY_PLACEMENT_VERSION_KEY, 0) >= OVERLAY_PLACEMENT_VERSION) {
+            return
+        }
+
+        val displayMetrics = resources.displayMetrics
+        val longEdge = max(displayMetrics.widthPixels, displayMetrics.heightPixels).toFloat()
+        val previousVersion = preferences.getInt(OVERLAY_PLACEMENT_VERSION_KEY, 0)
+        val portraitOffset = longEdge * 0.05f
+        val landscapeOffset = longEdge * 0.05f
+        val editor = preferences.edit()
+
+        val portraitControls = intArrayOf(
+            NativeLibrary.ButtonType.BUTTON_A,
+            NativeLibrary.ButtonType.BUTTON_B,
+            NativeLibrary.ButtonType.BUTTON_X,
+            NativeLibrary.ButtonType.BUTTON_Y,
+            NativeLibrary.ButtonType.BUTTON_ZL,
+            NativeLibrary.ButtonType.BUTTON_ZR,
+            NativeLibrary.ButtonType.TRIGGER_L,
+            NativeLibrary.ButtonType.TRIGGER_R,
+            NativeLibrary.ButtonType.BUTTON_START,
+            NativeLibrary.ButtonType.BUTTON_SELECT,
+            NativeLibrary.ButtonType.DPAD_UP,
+            NativeLibrary.ButtonType.STICK_LEFT,
+            NativeLibrary.ButtonType.STICK_C,
+            NativeLibrary.ButtonType.BUTTON_HOME,
+            NativeLibrary.ButtonType.BUTTON_SWAP,
+            NativeLibrary.ButtonType.BUTTON_TURBO,
+            Hotkey.COMBO_BUTTON.button,
+        )
+        portraitControls.forEach { controlId ->
+            val key = "$controlId-Portrait-Y"
+            if (preferences.contains(key)) {
+                val currentPosition = preferences.getFloat(key, 0f)
+                val updatedPosition = if (previousVersion == 2) {
+                    currentPosition + longEdge * 0.07f
+                } else {
+                    currentPosition - portraitOffset
+                }
+                editor.putFloat(key, updatedPosition.coerceAtLeast(0f))
+            }
+        }
+
+        intArrayOf(
+            NativeLibrary.ButtonType.BUTTON_A,
+            NativeLibrary.ButtonType.BUTTON_B,
+            NativeLibrary.ButtonType.BUTTON_X,
+            NativeLibrary.ButtonType.BUTTON_Y,
+        ).forEach { controlId ->
+            val key = "$controlId-X"
+            if (preferences.contains(key)) {
+                val currentPosition = preferences.getFloat(key, 0f)
+                val updatedPosition = if (previousVersion == 2) {
+                    currentPosition + landscapeOffset
+                } else {
+                    currentPosition - landscapeOffset
+                }
+                editor.putFloat(key, updatedPosition.coerceAtLeast(0f))
+            }
+        }
+
+        editor.putInt(OVERLAY_PLACEMENT_VERSION_KEY, OVERLAY_PLACEMENT_VERSION).apply()
     }
 
     fun resetButtonPlacement() {
@@ -1011,6 +1117,9 @@ class InputOverlay(context: Context?, attrs: AttributeSet?) :
     override fun isInEditMode(): Boolean = isInEditMode
 
     companion object {
+        private const val OVERLAY_PLACEMENT_VERSION_KEY = "OverlayPlacementVersion"
+        private const val OVERLAY_PLACEMENT_VERSION = 3
+
         private val preferences
             get() = PreferenceManager.getDefaultSharedPreferences(CitraApplication.appContext)
 

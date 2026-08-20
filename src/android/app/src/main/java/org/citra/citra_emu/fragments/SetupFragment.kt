@@ -45,11 +45,13 @@ import org.citra.citra_emu.model.SetupPage
 import org.citra.citra_emu.ui.main.MainActivity
 import org.citra.citra_emu.utils.BuildUtil
 import org.citra.citra_emu.utils.CitraDirectoryHelper
+import org.citra.citra_emu.utils.DirectoryInitialization
 import org.citra.citra_emu.utils.GameHelper
 import org.citra.citra_emu.utils.PermissionsHandler
 import org.citra.citra_emu.utils.ViewUtils
 import org.citra.citra_emu.viewmodel.GamesViewModel
 import org.citra.citra_emu.viewmodel.HomeViewModel
+import java.io.File
 
 class SetupFragment : Fragment() {
     private var _binding: FragmentSetupBinding? = null
@@ -71,6 +73,10 @@ class SetupFragment : Fragment() {
         const val KEY_NEXT_VISIBILITY = "NextButtonVisibility"
         const val KEY_BACK_VISIBILITY = "BackButtonVisibility"
         const val KEY_HAS_BEEN_WARNED = "HasBeenWarned"
+        private const val DIRECTORY_PAGE_INDEX = 2
+        private const val DONE_PAGE_INDEX = 3
+        private const val AUTO_CITRA_DIRECTORY = "/storage/emulated/0/rwEmulator/system/3ds"
+        private const val AUTO_GAMES_DIRECTORY = "/storage/emulated/0/rwEmulator/roms"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,6 +95,10 @@ class SetupFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         mainActivity = requireActivity() as MainActivity
+
+        if (canAutoConfigureDirectories()) {
+            autoConfigureDirectories()
+        }
 
         homeViewModel.selectedCitraDirectoryLiveData.observe(viewLifecycleOwner) { uri ->
             if (uri == null) {
@@ -438,7 +448,7 @@ class SetupFragment : Fragment() {
             }
         )
 
-        binding.viewPager2.currentItem = homeViewModel.setupCurrentPage
+        binding.viewPager2.currentItem = getInitialPageIndex(homeViewModel.setupCurrentPage)
 
         requireActivity().window.navigationBarColor =
             ContextCompat.getColor(requireContext(), android.R.color.transparent)
@@ -571,6 +581,9 @@ class SetupFragment : Fragment() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
             if (isGranted) {
+                if (canAutoConfigureDirectories()) {
+                    autoConfigureDirectories()
+                }
                 checkForButtonState.invoke()
                 return@registerForActivityResult
             }
@@ -584,6 +597,9 @@ class SetupFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             BuildUtil.assertNotGooglePlay()
             if (Environment.isExternalStorageManager()) {
+                if (canAutoConfigureDirectories()) {
+                    autoConfigureDirectories()
+                }
                 checkForButtonState.invoke()
                 return@registerForActivityResult
             }
@@ -634,13 +650,81 @@ class SetupFragment : Fragment() {
         mainActivity.finishSetup(binding.root.findNavController())
     }
 
+    private fun canAutoConfigureDirectories(): Boolean {
+        if (BuildUtil.isGooglePlayBuild) {
+            return false
+        }
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun autoConfigureDirectories() {
+        val citraDirectory = File(AUTO_CITRA_DIRECTORY)
+        if (!citraDirectory.isDirectory && !citraDirectory.mkdirs()) {
+            return
+        }
+
+        val gamesDirectory = File(AUTO_GAMES_DIRECTORY)
+        if (!gamesDirectory.exists() && !gamesDirectory.mkdirs()) {
+            return
+        }
+
+        PermissionsHandler.setCitraDirectory(AUTO_CITRA_DIRECTORY)
+        preferences.edit()
+            .putString(GameHelper.KEY_GAME_PATH, AUTO_GAMES_DIRECTORY)
+            .apply()
+
+        DirectoryInitialization.resetCitraDirectoryState()
+        DirectoryInitialization.start()
+
+        homeViewModel.setUserDir(requireActivity(), AUTO_CITRA_DIRECTORY)
+        homeViewModel.setGamesDir(requireActivity(), AUTO_GAMES_DIRECTORY)
+    }
+
+    private fun shouldSkipDirectoryPage(): Boolean {
+        return preferences.getString(PermissionsHandler.CITRA_DIRECTORY, "") == AUTO_CITRA_DIRECTORY &&
+            preferences.getString(GameHelper.KEY_GAME_PATH, "") == AUTO_GAMES_DIRECTORY &&
+            File(AUTO_CITRA_DIRECTORY).isDirectory && File(AUTO_GAMES_DIRECTORY).exists()
+    }
+
+    private fun getInitialPageIndex(savedPage: Int): Int {
+        return if (shouldSkipDirectoryPage() && savedPage == DIRECTORY_PAGE_INDEX) {
+            DONE_PAGE_INDEX
+        } else {
+            savedPage
+        }
+    }
+
+    private fun getNextPageIndex(currentPage: Int): Int {
+        return if (shouldSkipDirectoryPage() && currentPage == DIRECTORY_PAGE_INDEX - 1) {
+            DONE_PAGE_INDEX
+        } else {
+            currentPage + 1
+        }
+    }
+
+    private fun getPreviousPageIndex(currentPage: Int): Int {
+        return if (shouldSkipDirectoryPage() && currentPage == DONE_PAGE_INDEX) {
+            DIRECTORY_PAGE_INDEX - 1
+        } else {
+            currentPage - 1
+        }
+    }
+
     fun pageForward() {
-        binding.viewPager2.currentItem = binding.viewPager2.currentItem + 1
+        binding.viewPager2.currentItem = getNextPageIndex(binding.viewPager2.currentItem)
         homeViewModel.setupCurrentPage = binding.viewPager2.currentItem
     }
 
     fun pageBackward() {
-        binding.viewPager2.currentItem = binding.viewPager2.currentItem - 1
+        binding.viewPager2.currentItem = getPreviousPageIndex(binding.viewPager2.currentItem)
         homeViewModel.setupCurrentPage = binding.viewPager2.currentItem
     }
 
