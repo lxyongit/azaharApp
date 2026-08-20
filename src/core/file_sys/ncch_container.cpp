@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <span>
@@ -223,11 +224,6 @@ Loader::ResultStatus NCCHContainer::LoadHeader() {
 
     LOG_DEBUG(Service_FS, "NCCH type: {}", file->GetType().to_string());
 
-    if (!ncch_header.no_crypto) {
-        // Encrypted NCCH are not supported
-        return Loader::ResultStatus::ErrorEncrypted;
-    }
-
     has_header = true;
     return Loader::ResultStatus::Success;
 }
@@ -254,8 +250,129 @@ Loader::ResultStatus NCCHContainer::Load() {
             block_size = 1;
         }
 
+        bool failed_to_decrypt = false;
         if (!ncch_header.no_crypto) {
-            // Encrypted NCCH are not supported
+            is_encrypted = true;
+
+            LOG_INFO(Service_FS,
+                     "[NCCH-CRYPTO] Encrypted NCCH: title={:016X}, version={}, fixed_key={}, "
+                     "seed_crypto={}, secondary_slot={}, path='{}'",
+                     ncch_header.program_id, ncch_header.version,
+                     static_cast<bool>(ncch_header.fixed_key),
+                     static_cast<bool>(ncch_header.seed_crypto), ncch_header.secondary_key_slot,
+                     filepath);
+
+            if (ncch_header.fixed_key) {
+                LOG_DEBUG(Service_FS, "Fixed-key crypto");
+                primary_key.fill(0);
+                secondary_key.fill(0);
+            } else {
+                using namespace HW::AES;
+                InitKeys();
+                LOG_INFO(Service_FS,
+                         "[NCCH-CRYPTO] NCCH KeyX availability: secure1={}, secure2={}, "
+                         "secure3={}, secure4={}",
+                         IsKeyXAvailable(KeySlotID::NCCHSecure1),
+                         IsKeyXAvailable(KeySlotID::NCCHSecure2),
+                         IsKeyXAvailable(KeySlotID::NCCHSecure3),
+                         IsKeyXAvailable(KeySlotID::NCCHSecure4));
+                std::array<u8, 16> key_y_primary;
+                std::array<u8, 16> key_y_secondary;
+
+                std::copy(ncch_header.signature, ncch_header.signature + key_y_primary.size(),
+                          key_y_primary.begin());
+
+                if (!ncch_header.seed_crypto) {
+                    key_y_secondary = key_y_primary;
+                } else {
+                    const auto seed = FileSys::GetSeed(ncch_header.program_id);
+                    if (!seed) {
+                        LOG_ERROR(Service_FS, "Seed for program {:016X} not found",
+                                  ncch_header.program_id);
+                        failed_to_decrypt = true;
+                    } else {
+                        std::array<u8, 32> input;
+                        std::memcpy(input.data(), key_y_primary.data(), key_y_primary.size());
+                        std::memcpy(input.data() + key_y_primary.size(), seed->data(),
+                                    seed->size());
+                        CryptoPP::SHA256 sha;
+                        std::array<u8, CryptoPP::SHA256::DIGESTSIZE> digest;
+                        sha.CalculateDigest(digest.data(), input.data(), input.size());
+                        std::memcpy(key_y_secondary.data(), digest.data(), key_y_secondary.size());
+                    }
+                }
+
+                SetKeyY(KeySlotID::NCCHSecure1, key_y_primary);
+                if (!IsNormalKeyAvailable(KeySlotID::NCCHSecure1)) {
+                    LOG_ERROR(Service_FS, "Secure1 KeyX missing");
+                    failed_to_decrypt = true;
+                }
+                primary_key = GetNormalKey(KeySlotID::NCCHSecure1);
+
+                const auto set_secondary_key = [&](KeySlotID slot, const char* name) {
+                    LOG_DEBUG(Service_FS, "{} crypto", name);
+                    SetKeyY(slot, key_y_secondary);
+                    if (!IsNormalKeyAvailable(slot)) {
+                        LOG_ERROR(Service_FS, "{} KeyX missing", name);
+                        failed_to_decrypt = true;
+                    }
+                    secondary_key = GetNormalKey(slot);
+                };
+
+                switch (ncch_header.secondary_key_slot) {
+                case 0:
+                    set_secondary_key(KeySlotID::NCCHSecure1, "Secure1");
+                    break;
+                case 1:
+                    set_secondary_key(KeySlotID::NCCHSecure2, "Secure2");
+                    break;
+                case 10:
+                    set_secondary_key(KeySlotID::NCCHSecure3, "Secure3");
+                    break;
+                case 11:
+                    set_secondary_key(KeySlotID::NCCHSecure4, "Secure4");
+                    break;
+                default:
+                    LOG_ERROR(Service_FS, "Unknown NCCH secondary key slot {}",
+                              ncch_header.secondary_key_slot);
+                    failed_to_decrypt = true;
+                    break;
+                }
+            }
+
+            if (ncch_header.version == 0 || ncch_header.version == 2) {
+                std::reverse_copy(ncch_header.partition_id, ncch_header.partition_id + 8,
+                                  exheader_ctr.begin());
+                exefs_ctr = romfs_ctr = exheader_ctr;
+                exheader_ctr[8] = 1;
+                exefs_ctr[8] = 2;
+                romfs_ctr[8] = 3;
+            } else if (ncch_header.version == 1) {
+                std::copy(ncch_header.partition_id, ncch_header.partition_id + 8,
+                          exheader_ctr.begin());
+                exefs_ctr = romfs_ctr = exheader_ctr;
+                const auto offset_to_be = [](u32 offset) {
+                    return std::array<u8, 4>{static_cast<u8>(offset >> 24),
+                                             static_cast<u8>(offset >> 16),
+                                             static_cast<u8>(offset >> 8),
+                                             static_cast<u8>(offset)};
+                };
+                const auto exheader_offset = offset_to_be(0x200);
+                const auto exefs_offset = offset_to_be(ncch_header.exefs_offset * kBlockSize);
+                const auto romfs_offset = offset_to_be(ncch_header.romfs_offset * kBlockSize);
+                std::copy(exheader_offset.begin(), exheader_offset.end(), exheader_ctr.begin() + 12);
+                std::copy(exefs_offset.begin(), exefs_offset.end(), exefs_ctr.begin() + 12);
+                std::copy(romfs_offset.begin(), romfs_offset.end(), romfs_ctr.begin() + 12);
+            } else {
+                LOG_ERROR(Service_FS, "Unknown NCCH version {}", ncch_header.version);
+                failed_to_decrypt = true;
+            }
+        } else {
+            LOG_DEBUG(Service_FS, "No crypto");
+        }
+
+        if (failed_to_decrypt && !ncch_header.extended_header_size && !is_proto) {
+            LOG_ERROR(Service_FS, "Failed to derive NCCH decryption keys");
             return Loader::ResultStatus::ErrorEncrypted;
         }
 
@@ -270,6 +387,29 @@ Loader::ResultStatus NCCHContainer::Load() {
             file->Seek(sizeof(NCCH_Header), SEEK_SET);
             if (!read_exheader(file.get())) {
                 return Loader::ResultStatus::Error;
+            }
+
+            if (is_encrypted) {
+                // Some incorrectly marked ROMs contain a decrypted ExHeader. Retain the legacy
+                // compatibility check before attempting AES-CTR decryption.
+                if ((exheader_header.system_info.jump_id & 0xFFFFFFFF) ==
+                    (ncch_header.program_id & 0xFFFFFFFF)) {
+                    LOG_WARNING(Service_FS, "NCCH is marked encrypted but has a decrypted ExHeader");
+                    is_encrypted = false;
+                } else {
+                    if (failed_to_decrypt) {
+                        LOG_ERROR(Service_FS, "Failed to derive NCCH decryption keys");
+                        return Loader::ResultStatus::ErrorEncrypted;
+                    }
+                    CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(
+                        primary_key.data(), primary_key.size(), exheader_ctr.data());
+                    decryption.ProcessData(reinterpret_cast<u8*>(&exheader_header),
+                                           reinterpret_cast<u8*>(&exheader_header),
+                                           sizeof(exheader_header));
+                    LOG_INFO(Service_FS,
+                             "[NCCH-CRYPTO] ExHeader decrypted successfully for {:016X}",
+                             ncch_header.program_id);
+                }
             }
 
             const auto mods_path =
@@ -343,6 +483,28 @@ Loader::ResultStatus NCCHContainer::Load() {
             if (exefs_file->ReadAtBytes(&exefs_header, sizeof(ExeFs_Header), 0) !=
                 sizeof(ExeFs_Header))
                 return Loader::ResultStatus::Error;
+
+            if (is_encrypted) {
+                CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(
+                    primary_key.data(), primary_key.size(), exefs_ctr.data());
+                decryption.ProcessData(reinterpret_cast<u8*>(&exefs_header),
+                                       reinterpret_cast<u8*>(&exefs_header), sizeof(exefs_header));
+
+                const bool has_code_section = std::any_of(
+                    exefs_header.section, exefs_header.section + kMaxSections,
+                    [](const ExeFs_SectionHeader& section) {
+                        return std::strncmp(section.name, ".code", sizeof(section.name)) == 0;
+                    });
+                LOG_INFO(Service_FS,
+                         "[NCCH-CRYPTO] ExeFS header decrypted for {:016X}; code_section={}",
+                         ncch_header.program_id, has_code_section);
+                if (ncch_header.is_executable != 0 && !has_code_section) {
+                    LOG_ERROR(Service_FS,
+                              "[NCCH-CRYPTO] Decrypted ExeFS has no .code section; NCCH keys "
+                              "may not match this ROM");
+                    return Loader::ResultStatus::ErrorEncrypted;
+                }
+            }
 
             has_exefs = true;
         }
@@ -447,8 +609,10 @@ Loader::ResultStatus NCCHContainer::LoadSectionExeFS(const char* name, std::vect
     }
 
     // If we don't have any separate files, we'll need a full ExeFS
-    if (!exefs_file->IsOpen())
+    if (!exefs_file || !exefs_file->IsOpen()) {
+        LOG_ERROR(Service_FS, "[NCCH-CRYPTO] ExeFS is unavailable while loading section '{}'", name);
         return Loader::ResultStatus::Error;
+    }
 
     LOG_DEBUG(Service_FS, "{} sections:", kMaxSections);
     // Iterate through the ExeFs archive until we find a section with the specified name...
@@ -473,6 +637,13 @@ Loader::ResultStatus NCCHContainer::LoadSectionExeFS(const char* name, std::vect
                     temp_buffer.size())
                     return Loader::ResultStatus::Error;
 
+                if (is_encrypted) {
+                    CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(
+                        secondary_key.data(), secondary_key.size(), exefs_ctr.data());
+                    decryption.Seek(section.offset + sizeof(ExeFs_Header));
+                    decryption.ProcessData(temp_buffer.data(), temp_buffer.data(), section.size);
+                }
+
                 // Decompress .code section...
                 buffer.resize(LZSS_GetDecompressedSize(temp_buffer));
                 if (!LZSS_Decompress(temp_buffer, buffer)) {
@@ -483,11 +654,22 @@ Loader::ResultStatus NCCHContainer::LoadSectionExeFS(const char* name, std::vect
                 buffer.resize(section_size);
                 if (exefs_file->ReadBytes(buffer.data(), section_size) != section_size)
                     return Loader::ResultStatus::Error;
+                if (is_encrypted) {
+                    const auto& key = (strcmp(section.name, "icon") == 0 ||
+                                       strcmp(section.name, "banner") == 0)
+                                          ? primary_key
+                                          : secondary_key;
+                    CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(key.data(), key.size(),
+                                                                               exefs_ctr.data());
+                    decryption.Seek(section.offset + sizeof(ExeFs_Header));
+                    decryption.ProcessData(buffer.data(), buffer.data(), section.size);
+                }
             }
 
             return Loader::ResultStatus::Success;
         }
     }
+    LOG_ERROR(Service_FS, "[NCCH-CRYPTO] ExeFS section '{}' was not found", name);
     return Loader::ResultStatus::ErrorNotUsed;
 }
 
@@ -620,9 +802,15 @@ Loader::ResultStatus NCCHContainer::ReadRomFS(std::shared_ptr<RomFSReader>& romf
     if (!romfs_file_inner->IsOpen())
         return Loader::ResultStatus::Error;
 
-    std::shared_ptr<RomFSReader> direct_romfs =
-        std::make_shared<DirectRomFSReader>(std::make_unique<FileUtil::SubIOFile>(
-            std::move(romfs_file_inner), romfs_offset, romfs_size));
+    auto romfs_data = std::make_unique<FileUtil::SubIOFile>(std::move(romfs_file_inner),
+                                                            romfs_offset, romfs_size);
+    std::shared_ptr<RomFSReader> direct_romfs;
+    if (is_encrypted) {
+        direct_romfs = std::make_shared<DirectRomFSReader>(std::move(romfs_data), secondary_key,
+                                                            romfs_ctr, 0x1000);
+    } else {
+        direct_romfs = std::make_shared<DirectRomFSReader>(std::move(romfs_data));
+    }
 
     const auto path =
         fmt::format("{}mods/{:016X}/", FileUtil::GetUserPath(FileUtil::UserPath::LoadDir),

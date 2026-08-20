@@ -45,11 +45,14 @@ import org.citra.citra_emu.features.settings.model.view.InputBindingSetting
 import org.citra.citra_emu.fragments.EmulationFragment
 import org.citra.citra_emu.fragments.MessageDialogFragment
 import org.citra.citra_emu.model.Game
+import org.citra.citra_emu.ui.main.MainActivity
 import org.citra.citra_emu.utils.BuildUtil
 import org.citra.citra_emu.utils.ControllerMappingHelper
 import org.citra.citra_emu.utils.EmulationLifecycleUtil
 import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.FileBrowserHelper
+import org.citra.citra_emu.utils.FileUtil
+import org.citra.citra_emu.utils.GameHelper
 import org.citra.citra_emu.utils.Log
 import org.citra.citra_emu.utils.NetPlayManager
 import org.citra.citra_emu.utils.RefreshRateUtil
@@ -104,6 +107,21 @@ class EmulationActivity : AppCompatActivity() {
 
         super.onCreate(savedInstanceState)
 
+        val intentExtras = intent.extras?.keySet()?.joinToString { key ->
+            "$key=${intent.extras?.get(key)}"
+        }.orEmpty()
+        Log.info(
+            "[APILOG][EmulationActivity] launch data=${intent.data} " +
+                "dataString=${intent.dataString} action=${intent.action} " +
+                "type=${intent.type} flags=0x${intent.flags.toString(16)} " +
+                "clipData=${intent.clipData} extras={$intentExtras}"
+        )
+
+        if (maybeRedirectInstallableArchiveIntent(intent)) {
+            return
+        }
+
+        NativeLibrary.initMultiplayer()
         secondaryDisplayManager = SecondaryDisplay(this)
         secondaryDisplayManager.updateDisplay()
 
@@ -132,15 +150,8 @@ class EmulationActivity : AppCompatActivity() {
         isEmulationRunning = true
         instance = this
 
-        val game = try {
-            intent.extras?.let { extras ->
-                BundleCompat.getParcelable(extras, "game", Game::class.java)
-            } ?: run {
-                Log.error("[EmulationActivity] Missing game data in intent extras")
-                return
-            }
-        } catch (e: Exception) {
-            Log.error("[EmulationActivity] Failed to retrieve game data: ${e.message}")
+        val game = resolveLaunchGame(intent) ?: run {
+            Log.error("[EmulationActivity] Missing game data in launch intent")
             return
         }
 
@@ -149,6 +160,20 @@ class EmulationActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        val intentExtras = intent.extras?.keySet()?.joinToString { key ->
+            "$key=${intent.extras?.get(key)}"
+        }.orEmpty()
+        Log.info(
+            "[APILOG][EmulationActivity] new intent data=${intent.data} " +
+                "dataString=${intent.dataString} action=${intent.action} " +
+                "type=${intent.type} flags=0x${intent.flags.toString(16)} " +
+                "clipData=${intent.clipData} extras={$intentExtras} " +
+                "filePath=${intent.getStringExtra("filePath")}"
+        )
+        if (maybeRedirectInstallableArchiveIntent(intent)) {
+            return
+        }
+
         setIntent(intent)
 
         NativeLibrary.stopEmulation()
@@ -159,9 +184,7 @@ class EmulationActivity : AppCompatActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
         emulationViewModel.setEmulationStarted(false)
 
-        val game = intent.extras?.let { extras ->
-            BundleCompat.getParcelable(extras, "game", Game::class.java)
-        }
+        val game = resolveLaunchGame(intent)
         if (game != null) {
             NativeLibrary.playTimeManagerStart(game.titleId)
         }
@@ -169,6 +192,48 @@ class EmulationActivity : AppCompatActivity() {
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.fragment_container) as NavHostFragment
         navHostFragment.navController.setGraph(R.navigation.emulation_navigation, intent.extras)
+    }
+
+    private fun resolveLaunchGame(intent: Intent): Game? {
+        val bundledGame = try {
+            intent.extras?.let { extras ->
+                BundleCompat.getParcelable(extras, "game", Game::class.java)
+            }
+        } catch (e: Exception) {
+            Log.error("[EmulationActivity] Failed to retrieve game data from extras: ${e.message}")
+            null
+        }
+        if (bundledGame != null) {
+            return bundledGame
+        }
+
+        val gameUri = intent.data ?: return null
+        return runCatching {
+            GameHelper.getGame(
+                gameUri,
+                isInstalled = false,
+                addedToLibrary = false,
+                mediaType = Game.MediaType.GAME_CARD
+            )
+        }.onFailure { error ->
+            Log.error("[EmulationActivity] Failed to resolve game from intent Uri: ${error.message}")
+        }.getOrNull()
+    }
+
+    private fun maybeRedirectInstallableArchiveIntent(intent: Intent): Boolean {
+        if (intent.action != Intent.ACTION_VIEW) {
+            return false
+        }
+
+        val gameUri = intent.data ?: return false
+        val extension = runCatching { FileUtil.getExtension(gameUri) }.getOrNull() ?: return false
+        if (extension != "cia" && extension != "zcia") {
+            return false
+        }
+
+        startActivity(Intent(intent).setClass(this, MainActivity::class.java))
+        finish()
+        return true
     }
 
     // On some devices, the system bars will not disappear on first boot or after some

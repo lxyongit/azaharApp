@@ -46,3 +46,25 @@ class Cheat(@field:Keep private val mPointer: Long) {
         external fun createGatewayCode(name: String, notes: String, code: String): Cheat
     }
 }
+
+/** Metadata stored as hidden note lines so the single cheat file has stable logical sections. */
+object CheatMetadata {
+    const val MANUAL_ORIGIN = "azaharplus:origin=manual"
+    const val SERVER_ORIGIN = "azaharplus:origin=local-server"
+
+    fun getOrigin(notes: String): String? = notes.lineSequence()
+        .map(String::trim)
+        .firstOrNull { it == MANUAL_ORIGIN || it == SERVER_ORIGIN }
+
+    fun visibleNotes(notes: String): String = notes.lineSequence()
+        .filter { it.trim() != MANUAL_ORIGIN && it.trim() != SERVER_ORIGIN }
+        .joinToString("\n")
+        .trim()
+
+    fun withOrigin(notes: String, origin: String): String {
+        val visible = visibleNotes(notes)
+        return listOf(visible, origin)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+    }
+}

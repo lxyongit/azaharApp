@@ -418,8 +418,9 @@ void AuthorizeCIAFileDecryption(CIAFile* cia_file, Kernel::HLERequestContext& ct
     }
 }
 
-void CIAFile::AuthorizeDecryptionFromHLE() {
+void CIAFile::AuthorizeDecryptionFromHLE(bool allow_plaintext_decryption_) {
     decryption_authorized = true;
+    allow_plaintext_decryption = allow_plaintext_decryption_;
 }
 
 CIAFile::CIAFile(Core::System& system_, Service::FS::MediaType media_type, bool from_cdn_)
@@ -559,7 +560,9 @@ ResultVal<std::size_t> CIAFile::WriteContentData(u64 offset, std::size_t length,
                 }
                 current_content_index = static_cast<u16>(i);
                 current_content_file =
-                    std::make_unique<NCCHCryptoFile>(content_file_paths[i], decryption_authorized);
+                    std::make_unique<NCCHCryptoFile>(
+                        content_file_paths[i],
+                        decryption_authorized && !allow_plaintext_decryption);
                 current_content_file->decryption_authorized = decryption_authorized;
 
                 current_content_install_result.type = InstallResult::Type::APP;
@@ -696,6 +699,7 @@ Result CIAFile::PrepareToImportContent(const FileSys::TitleMetadata& tmd) {
     current_content_file.reset();
     current_content_index = -1;
     content_file_paths.clear();
+
     for (std::size_t i = 0; i < content_count; i++) {
         auto path = GetTitleContentPath(media_type, tmd.GetTitleID(), i, is_update);
         content_file_paths.emplace_back(path);
@@ -795,8 +799,9 @@ ResultVal<std::size_t> CIAFile::WriteContentDataIndexed(u16 content_index, u64 o
         }
 
         current_content_index = content_index;
-        current_content_file = std::make_unique<NCCHCryptoFile>(content_file_paths[content_index],
-                                                                decryption_authorized);
+        current_content_file = std::make_unique<NCCHCryptoFile>(
+            content_file_paths[content_index],
+            decryption_authorized && !allow_plaintext_decryption);
         current_content_file->decryption_authorized = decryption_authorized;
 
         current_content_install_result.type = InstallResult::Type::APP;
@@ -1057,7 +1062,8 @@ void ContentFile::Cancel(FS::MediaType media_type, u64 title_id) {
 }
 
 InstallStatus InstallCIA(const std::string& path,
-                         std::function<ProgressCallback>&& update_callback) {
+                         std::function<ProgressCallback>&& update_callback,
+                         bool allow_plaintext_decryption) {
     LOG_INFO(Service_AM, "Installing {}...", path);
 
     if (!FileUtil::Exists(path)) {
@@ -1075,11 +1081,22 @@ InstallStatus InstallCIA(const std::string& path,
     FileSys::CIAContainer container;
     if (container.Load(in_file.get()) == Loader::ResultStatus::Success) {
         in_file->Seek(0, SEEK_SET);
+
+        // Direct Android installs do not go through the emulated AM import flow, which is
+        // normally responsible for authorizing decryption. NCCH decryption only requires the
+        // OTP and console certificate used to derive the unique NCCH crypto key.
+        const bool decryption_authorized = allow_plaintext_decryption ||
+                                           (HW::UniqueData::GetOTP().Valid() &&
+                                            HW::UniqueData::GetCTCert().IsValid());
         Service::AM::CIAFile installFile(
             Core::System::GetInstance(),
             Service::AM::GetTitleMediaType(container.GetTitleMetadata().GetTitleID()));
+        if (decryption_authorized) {
+            installFile.AuthorizeDecryptionFromHLE(allow_plaintext_decryption);
+        }
 
-        if (container.GetTitleMetadata().HasEncryptedContent(container.GetHeader())) {
+        if (container.GetTitleMetadata().HasEncryptedContent(container.GetHeader()) &&
+            !decryption_authorized) {
             LOG_ERROR(Service_AM, "File {} is encrypted! Aborting...", path);
             return InstallStatus::ErrorEncrypted;
         }
@@ -1181,12 +1198,19 @@ InstallStatus CheckCIAToInstall(const std::string& path, bool& is_compressed,
 
 ResultVal<std::pair<TitleInfo, std::unique_ptr<Loader::SMDH>>> GetCIAInfos(
     const std::string& path) {
-    if (!FileUtil::Exists(path)) {
+    // fd:// paths are supplied by Android for externally shared files. They do
+    // not exist as filesystem paths, but IOFile can duplicate and read the fd.
+    if (!path.starts_with("fd://") && !FileUtil::Exists(path)) {
         LOG_ERROR(Service_AM, "File {} does not exist!", path);
         return ResultUnknown;
     }
 
     std::unique_ptr<FileUtil::IOFile> in_file = std::make_unique<FileUtil::IOFile>(path, "rb");
+    // Duplicated Android file descriptors share their source offset. Loader probing
+    // may have advanced it before this CIA lookup, so always parse from byte zero.
+    if (!in_file->Seek(0, SEEK_SET)) {
+        return ResultUnknown;
+    }
     FileSys::CIAContainer container;
     if (container.Load(in_file.get()) == Loader::ResultStatus::Success) {
         in_file->Seek(0, SEEK_SET);

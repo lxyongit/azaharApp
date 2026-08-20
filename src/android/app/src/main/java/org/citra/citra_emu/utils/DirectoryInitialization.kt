@@ -6,6 +6,7 @@ package org.citra.citra_emu.utils
 
 import android.content.Context
 import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -22,6 +23,9 @@ import org.citra.citra_emu.utils.PermissionsHandler.hasWriteAccess
  */
 object DirectoryInitialization {
     private const val SYS_DIR_VERSION = "sysDirectoryVersion"
+    private const val AES_KEYS_ASSET = "aes_keys.txt"
+    private const val AES_KEYS_FILENAME = "aes_keys.txt"
+    private const val ANDROID_LOG_TAG = "AzaharInit"
 
     @Volatile
     private var directoryState: DirectoryInitializationState? = null
@@ -42,6 +46,7 @@ object DirectoryInitialization {
             directoryState = if (hasWriteAccess(context)) {
                 if (setCitraUserDirectory()) {
                     CitraApplication.documentsTree.setRoot(Uri.parse(userPath))
+                    ensureBundledAesKeys()
                     NativeLibrary.createLogFile()
                     NativeLibrary.logUserDirectory(userPath.toString())
                     NativeLibrary.createConfigFile()
@@ -95,6 +100,64 @@ object DirectoryInitialization {
             return true
         }
         return false
+    }
+
+    /**
+     * Installs the bundled AES key file on first run. A file supplied by the user always wins and
+     * is never replaced.
+     */
+    private fun ensureBundledAesKeys() {
+        val path = userPath ?: return
+        try {
+            if (FileUtil.isNativePath(path)) {
+                val sysdataDirectory = File(path, "sysdata")
+                if (!sysdataDirectory.exists() && !sysdataDirectory.mkdirs()) {
+                    android.util.Log.e(ANDROID_LOG_TAG, "Failed to create sysdata directory")
+                    return
+                }
+
+                val destination = File(sysdataDirectory, AES_KEYS_FILENAME)
+                if (destination.exists()) {
+                    android.util.Log.d(ANDROID_LOG_TAG, "Keeping existing sysdata/aes_keys.txt")
+                    return
+                }
+
+                context.assets.open(AES_KEYS_ASSET).use { input ->
+                    FileOutputStream(destination).use { output -> copyFile(input, output) }
+                }
+            } else {
+                val root = DocumentFile.fromTreeUri(context, Uri.parse(path))
+                if (root == null) {
+                    android.util.Log.e(ANDROID_LOG_TAG, "Failed to access user directory")
+                    return
+                }
+                val sysdataDirectory = root.findFile("sysdata") ?: root.createDirectory("sysdata")
+                if (sysdataDirectory == null || !sysdataDirectory.isDirectory) {
+                    android.util.Log.e(ANDROID_LOG_TAG, "Failed to create sysdata directory")
+                    return
+                }
+                if (sysdataDirectory.findFile(AES_KEYS_FILENAME) != null) {
+                    android.util.Log.d(ANDROID_LOG_TAG, "Keeping existing sysdata/aes_keys.txt")
+                    return
+                }
+
+                val destination =
+                    sysdataDirectory.createFile(FileUtil.TEXT_PLAIN, AES_KEYS_FILENAME) ?: run {
+                        android.util.Log.e(ANDROID_LOG_TAG, "Failed to create sysdata/aes_keys.txt")
+                        return
+                    }
+                val output = context.contentResolver.openOutputStream(destination.uri, "wt") ?: run {
+                    android.util.Log.e(ANDROID_LOG_TAG, "Failed to open sysdata/aes_keys.txt")
+                    return
+                }
+                context.assets.open(AES_KEYS_ASSET).use { input ->
+                    output.use { copyFile(input, it) }
+                }
+            }
+            android.util.Log.i(ANDROID_LOG_TAG, "Installed bundled sysdata/aes_keys.txt")
+        } catch (e: Exception) {
+            android.util.Log.e(ANDROID_LOG_TAG, "Failed to install bundled aes_keys.txt", e)
+        }
     }
 
     private fun copyAsset(asset: String, output: File, overwrite: Boolean, context: Context) {

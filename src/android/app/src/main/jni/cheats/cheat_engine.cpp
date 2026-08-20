@@ -50,6 +50,13 @@ JNIEXPORT void JNICALL Java_org_citra_citra_1emu_features_cheats_model_CheatEngi
     GetEngine().AddCheat(std::move(cheat));
 }
 
+JNIEXPORT void JNICALL
+Java_org_citra_citra_1emu_features_cheats_model_CheatEngine_prependCheat(JNIEnv* env, jclass,
+                                                                          jobject j_cheat) {
+    auto cheat = *CheatFromJava(env, j_cheat);
+    GetEngine().AddCheatAtBeginning(std::move(cheat));
+}
+
 JNIEXPORT void JNICALL Java_org_citra_citra_1emu_features_cheats_model_CheatEngine_removeCheat(
     JNIEnv* env, jclass, jint index) {
     GetEngine().RemoveCheat(index);

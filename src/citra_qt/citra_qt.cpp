@@ -199,6 +199,35 @@ private:
 };
 #endif
 
+static std::optional<QString> FindInstalledCiaExecutable(const QString& cia_path) {
+    const auto cia_info = Service::AM::GetCIAInfos(cia_path.toStdString());
+    if (!cia_info.Succeeded()) {
+        return std::nullopt;
+    }
+
+    const u64 title_id = cia_info.Unwrap().first.tid;
+    const auto media_type = Service::AM::GetTitleMediaType(title_id);
+    const std::string installed_path = Service::AM::GetTitleContentPath(media_type, title_id);
+    if (!FileUtil::Exists(installed_path)) {
+        return std::nullopt;
+    }
+
+    auto loader = Loader::GetLoader(installed_path);
+    if (!loader) {
+        return std::nullopt;
+    }
+
+    bool executable = false;
+    const auto status = loader->IsExecutable(executable);
+    if ((!executable && status != Loader::ResultStatus::ErrorEncrypted) ||
+        (status != Loader::ResultStatus::Success &&
+         status != Loader::ResultStatus::ErrorEncrypted)) {
+        return std::nullopt;
+    }
+
+    return QString::fromStdString(installed_path);
+}
+
 static QString PrettyProductName() {
 #ifdef _WIN32
     // After Windows 10 Version 2004, Microsoft decided to switch to a different notation: 20H2
@@ -1472,7 +1501,13 @@ void GMainWindow::BootGame(const QString& filename) {
                           filename.startsWith(QString::fromStdString("articinio:/")) ||
                           filename.startsWith(QString::fromStdString("articinin:/"));
 
-    if (!is_artic && filename.endsWith(QStringLiteral(".cia"))) {
+    if (!is_artic && filename.endsWith(QStringLiteral(".cia"), Qt::CaseInsensitive)) {
+        if (const auto installed_path = FindInstalledCiaExecutable(filename)) {
+            LOG_INFO(Frontend, "CIA '{}' is already installed; starting '{}'.",
+                     filename.toStdString(), installed_path->toStdString());
+            BootGame(*installed_path);
+            return;
+        }
         const auto answer = QMessageBox::question(
             this, tr("CIA must be installed before usage"),
             tr("Before using this CIA, you must install it. Do you want to install it now?"),

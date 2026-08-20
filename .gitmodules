@@ -1,108 +1,153 @@
+
 [submodule "boost"]
 	path = externals/boost
 	url = https://github.com/azahar-emu/ext-boost.git
+	ignore = dirty
 [submodule "nihstro"]
 	path = externals/nihstro
 	url = https://github.com/neobrain/nihstro.git
+ignore = dirty
 [submodule "soundtouch"]
 	path = externals/soundtouch
 	url = https://github.com/azahar-emu/soundtouch.git
+ignore = dirty
 [submodule "catch2"]
 	path = externals/catch2
 	url = https://github.com/catchorg/Catch2
+ignore = dirty
 [submodule "dynarmic"]
 	path = externals/dynarmic
 	url = https://github.com/azahar-emu/dynarmic.git
+ignore = dirty
 [submodule "xbyak"]
 	path = externals/xbyak
 	url = https://github.com/herumi/xbyak.git
+ignore = dirty
 [submodule "fmt"]
 	path = externals/fmt
 	url = https://github.com/fmtlib/fmt.git
+ignore = dirty
 [submodule "enet"]
 	path = externals/enet
 	url = https://github.com/lsalzman/enet.git
+ignore = dirty
 [submodule "inih"]
 	path = externals/inih/inih
 	url = https://github.com/benhoyt/inih.git
+ignore = dirty
 [submodule "libressl"]
 	path = externals/libressl
 	url = https://github.com/azahar-emu/ext-libressl-portable.git
+ignore = dirty
 [submodule "libusb"]
 	path = externals/libusb/libusb
 	url = https://github.com/libusb/libusb.git
+ignore = dirty
 [submodule "cubeb"]
 	path = externals/cubeb
 	url = https://github.com/mozilla/cubeb
+ignore = dirty
 [submodule "discord-rpc"]
 	path = externals/discord-rpc
 	url = https://github.com/azahar-emu/discord-rpc.git
+ignore = dirty
 [submodule "cpp-jwt"]
 	path = externals/cpp-jwt
 	url = https://github.com/arun11299/cpp-jwt.git
+ignore = dirty
 [submodule "teakra"]
 	path = externals/teakra
 	url = https://github.com/wwylele/teakra.git
+ignore = dirty
 [submodule "lodepng"]
 	path = externals/lodepng/lodepng
 	url = https://github.com/lvandeve/lodepng.git
+ignore = dirty
 [submodule "zstd"]
 	path = externals/zstd
 	url = https://github.com/facebook/zstd.git
+ignore = dirty
 [submodule "libyuv"]
 	path = externals/libyuv
 	url = https://github.com/lemenkov/libyuv.git
+ignore = dirty
 [submodule "sdl2"]
 	path = externals/sdl2/SDL
 	url = https://github.com/libsdl-org/SDL
+ignore = dirty
 [submodule "dds-ktx"]
 	path = externals/dds-ktx
 	url = https://github.com/septag/dds-ktx
+ignore = dirty
 [submodule "openal-soft"]
 	path = externals/openal-soft
 	url = https://github.com/azahar-emu/openal-soft
+ignore = dirty
 [submodule "glslang"]
 	path = externals/glslang
 	url = https://github.com/KhronosGroup/glslang
+ignore = dirty
 [submodule "vma"]
 	path = externals/vma
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+ignore = dirty
 [submodule "vulkan-headers"]
 	path = externals/vulkan-headers
 	url = https://github.com/KhronosGroup/Vulkan-Headers
+ignore = dirty
 [submodule "sirit"]
 	path = externals/sirit/sirit
 	url = https://github.com/azahar-emu/sirit
+ignore = dirty
 [submodule "faad2"]
 	path = externals/faad2/faad2
 	url = https://github.com/knik0/faad2
+ignore = dirty
 [submodule "library-headers"]
 	path = externals/library-headers
 	url = https://github.com/azahar-emu/ext-library-headers.git
+ignore = dirty
 [submodule "libadrenotools"]
 	path = externals/libadrenotools
 	url = https://github.com/bylaws/libadrenotools
+ignore = dirty
 [submodule "oaknut"]
 	path = externals/oaknut
 	url = https://github.com/merryhime/oaknut.git
+ignore = dirty
 [submodule "compatibility-list"]
 	path = dist/compatibility_list
 	url = https://github.com/azahar-emu/compatibility-list
+ignore = dirty
 [submodule "spirv-tools"]
 	path = externals/spirv-tools
 	url = https://github.com/KhronosGroup/SPIRV-Tools
+ignore = dirty
 [submodule "spirv-headers"]
 	path = externals/spirv-headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers
+ignore = dirty
 [submodule "externals/xxHash"]
 	path = externals/xxHash
 	url = https://github.com/Cyan4973/xxHash.git
+ignore = dirty
 [submodule "externals/libretro-common"]
 	path = externals/libretro-common/libretro-common
 	url = https://github.com/libretro/libretro-common.git
+ignore = dirty
 [submodule "dllwalker"]
 	path = externals/dllwalker
 	url = https://github.com/azahar-emu/dllwalker
+ignore = dirty
 [submodule "externals/cryptopp"]
 	path = externals/cryptopp
 	url = https://github.com/cryptopp-modern/cryptopp-modern.git
+ignore = dirty
+[submodule "externals/Anylinux-AppImages"]
+	path = externals/Anylinux-AppImages
+	url = https://github.com/pkgforge-dev/Anylinux-AppImages.git
+ignore = dirty
+[submodule "externals/libzip"]
+	path = externals/libzip
+	url = https://github.com/nih-at/libzip.git
+ignore = dirty

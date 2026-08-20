@@ -126,9 +126,21 @@ ResultStatus AppLoader_NCCH::LoadExec(std::shared_ptr<Kernel::Process>& process)
         return ResultStatus::ErrorNotLoaded;
 
     std::vector<u8> code;
+    const ResultStatus code_result = ReadCode(code);
+    if (code_result != ResultStatus::Success) {
+        LOG_ERROR(Loader, "[NCCH-CRYPTO] Failed to load .code section (Error {})", code_result);
+        return code_result;
+    }
+
     u64_le program_id;
-    if (ResultStatus::Success == ReadCode(code) &&
-        ResultStatus::Success == ReadProgramId(program_id)) {
+    const ResultStatus program_id_result = ReadProgramId(program_id);
+    if (program_id_result != ResultStatus::Success) {
+        LOG_ERROR(Loader, "[NCCH-CRYPTO] Failed to read program ID (Error {})",
+                  program_id_result);
+        return program_id_result;
+    }
+
+    {
         if (IsGbaVirtualConsole(code)) {
             LOG_ERROR(Loader, "Encountered unsupported GBA Virtual Console code section.");
             return ResultStatus::ErrorGbaTitle;

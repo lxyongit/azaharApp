@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.preference.PreferenceManager
 import java.util.Locale
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,7 +19,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import org.citra.citra_emu.CitraApplication
+import org.citra.citra_emu.NativeLibrary
 import org.citra.citra_emu.model.Game
+import org.citra.citra_emu.utils.BuildUtil
+import org.citra.citra_emu.utils.FileUtil
 import org.citra.citra_emu.utils.GameHelper
 
 class GamesViewModel : ViewModel() {
@@ -54,9 +58,15 @@ class GamesViewModel : ViewModel() {
                     return@forEach
                 }
 
-                val gameExists =
-                    DocumentFile.fromSingleUri(CitraApplication.appContext, Uri.parse(game.path))
-                        ?.exists()
+                val gameUri = Uri.parse(game.path)
+                val gameExists = when {
+                    game.isInstalled -> true
+                    FileUtil.isNativePath(game.path) -> File(game.path).exists()
+                    BuildUtil.isGooglePlayBuild ->
+                        DocumentFile.fromSingleUri(CitraApplication.appContext, gameUri)
+                            ?.exists() == true
+                    else -> NativeLibrary.nativeFileExists(NativeLibrary.getNativePath(gameUri))
+                }
                 if (gameExists == true) {
                     deserializedGames.add(game)
                 } else if (game.isInstalled) {

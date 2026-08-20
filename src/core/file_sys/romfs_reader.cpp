@@ -29,6 +29,12 @@ std::size_t DirectRomFSReader::ReadFile(std::size_t offset, std::size_t length, 
     // Skip cache if the read is too big
     if (segments.size() == 1 && segments[0].second > cache_line_size) {
         length = file->ReadAtBytes(buffer, length, offset);
+        if (is_encrypted && length) {
+            CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(key.data(), key.size(),
+                                                                       ctr.data());
+            decryption.Seek(crypto_offset + offset);
+            decryption.ProcessData(buffer, buffer, length);
+        }
         LOG_TRACE(Service_FS, "RomFS Cache SKIP: offset={}, length={}", offset, length);
         return length;
     }
@@ -43,6 +49,13 @@ std::size_t DirectRomFSReader::ReadFile(std::size_t offset, std::size_t length, 
         if (!cache_entry.first) {
             // If not found, read from disk and cache the data
             read_size = file->ReadAtBytes(cache_entry.second.data(), read_size, page);
+            if (is_encrypted && read_size) {
+                CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(
+                    key.data(), key.size(), ctr.data());
+                decryption.Seek(crypto_offset + page);
+                decryption.ProcessData(cache_entry.second.data(), cache_entry.second.data(),
+                                       read_size);
+            }
             LOG_TRACE(Service_FS, "RomFS Cache MISS: page={}, length={}, into={}", page, seg.second,
                       (seg.first - page));
         } else {

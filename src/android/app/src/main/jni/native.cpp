@@ -890,9 +890,18 @@ jlong Java_org_citra_citra_1emu_NativeLibrary_getTitleId(JNIEnv* env, [[maybe_un
     const auto loader = Loader::GetLoader(filepath);
 
     u64 title_id{};
+    Loader::ResultStatus result = Loader::ResultStatus::Error;
     if (loader) {
-        loader->ReadProgramId(title_id);
+        result = loader->ReadProgramId(title_id);
     }
+
+    if (result != Loader::ResultStatus::Success || title_id == 0) {
+        const auto meta_info = Service::AM::GetCIAInfos(filepath);
+        if (meta_info.Succeeded()) {
+            title_id = meta_info.Unwrap().first.tid;
+        }
+    }
+
     return static_cast<jlong>(title_id);
 }
 
@@ -1115,7 +1124,8 @@ JNIEXPORT jobject JNICALL Java_org_citra_citra_1emu_utils_CiaInstallWorker_insta
         path, [env, jobj](std::size_t total_bytes_read, std::size_t file_size) {
             env->CallVoidMethod(jobj, IDCache::GetCiaInstallHelperSetProgress(),
                                 static_cast<jint>(file_size), static_cast<jint>(total_bytes_read));
-        });
+        },
+        true);
 
     return IDCache::GetJavaCiaInstallStatus(res);
 }

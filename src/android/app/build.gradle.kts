@@ -1,4 +1,4 @@
-// Copyright 2023-2026 Citra Emulator Project / Azahar Emulator Project
+// Copyright Citra Emulator Project / Azahar Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
@@ -12,7 +12,6 @@ plugins {
     id("kotlin-parcelize")
     kotlin("plugin.serialization") version "2.0.20"
     id("androidx.navigation.safeargs.kotlin")
-    id("org.jlleitschuh.gradle.ktlint")
 }
 
 /**
@@ -21,7 +20,7 @@ plugins {
  * next 680 years.
  */
 val autoVersion = (((System.currentTimeMillis() / 1000) - 1451606400) / 10).toInt()
-val abiFilter = listOf("arm64-v8a", "x86_64")
+val abiFilter = listOf("arm64-v8a")
 
 val downloadedJniLibsPath = "${layout.buildDirectory.get().asFile.path}/downloadedJniLibs"
 
@@ -63,9 +62,12 @@ android {
     defaultConfig {
         // The application ID refers to Lime3DS to allow for
         // the Play Store listing, which was originally set up for Lime3DS, to still be used.
-        applicationId = "org.azahar_emu.azahar"
-        minSdk = 29
-        targetSdk = 37
+        // applicationId = "org.azahar_emu.azahar"
+        // applicationId = "io.github.lime3ds.android"
+        applicationId = "com.gzhuaiyun.azaharplus"
+
+        minSdk = 28
+        targetSdk = 35
         versionCode = autoVersion
         versionName = getGitVersion()
 
@@ -87,9 +89,8 @@ android {
             }
         }
 
-        buildConfigField("String", "GIT_VERSION", "\"${getGitVersion()}\"")
-        // ^ Has no suffix, unlike VERSION_NAME
         buildConfigField("String", "GIT_HASH", "\"${getGitHash()}\"")
+        buildConfigField("String", "GIT_VERSION", "\"${getGitVersion()}\"")
         buildConfigField("String", "BRANCH", "\"${getBranch()}\"")
     }
 
@@ -126,8 +127,8 @@ android {
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         register("relWithDebInfo") {
             initWith(getByName("release"))
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // applicationIdSuffix = ".debug"
+            // versionNameSuffix = "-debug"
             signingConfig = signingConfigs.getByName("debug")
             isShrinkResources = true
             // TODO: ^- Does this actually do anything when isDebuggable is enabled? -OS
@@ -162,8 +163,8 @@ android {
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
             // TODO If this is ever modified, change application_id in debug/strings.xml
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // applicationIdSuffix = ".debug"
+            // versionNameSuffix = "-debug"
             isDebuggable = true
             isJniDebuggable = true
         }
@@ -177,11 +178,11 @@ android {
             dimension = "version"
             versionNameSuffix = "-vanilla"
         }
-        register("googlePlay") {
-            dimension = "version"
-            versionNameSuffix = "-googleplay"
-            applicationId = "io.github.lime3ds.android"
-        }
+        // register("googlePlay") {
+        //     dimension = "version"
+        //     versionNameSuffix = "-googleplay"
+        //     // applicationId = "io.github.lime3ds.android"
+        // }
     }
 
     externalNativeBuild {
@@ -244,10 +245,6 @@ val unzipVulkanValidationLayers = tasks.register<Copy>("unzipVulkanValidationLay
 
 tasks.named("preBuild") {
     dependsOn(unzipVulkanValidationLayers)
-}
-
-ktlint {
-    version = "1.8.0"
 }
 
 fun getGitVersion(): String {

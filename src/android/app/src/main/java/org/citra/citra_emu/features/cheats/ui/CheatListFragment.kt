@@ -91,6 +91,13 @@ class CheatListFragment : Fragment() {
                     }
                 }
             }
+            launch {
+                repeatOnLifecycle(Lifecycle.State.CREATED) {
+                    cheatsViewModel.cheatsReloadedEvent.collect {
+                        binding.cheatList.adapter?.notifyDataSetChanged()
+                    }
+                }
+            }
         }
 
         binding.fab.setOnClickListener {

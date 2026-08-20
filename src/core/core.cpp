@@ -135,10 +135,6 @@ System::ResultStatus System::RunLoop(bool tight_loop) {
             status_details = "Failed to load savestate";
             return ResultStatus::ErrorSavestate;
         }
-        if (info.status == Core::SaveStateInfo::ValidationStatus::BuildMismatch) {
-            status_details = info.build_name;
-            return ResultStatus::ErrorSavestateBuildMismatch;
-        }
         save_state_slot = param;
         save_state_request_time = std::chrono::steady_clock::now();
         save_state_request_status = SaveStateStatus::LOADING;

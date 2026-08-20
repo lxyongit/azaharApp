@@ -64,3 +64,4 @@ GIT-TAG
 
 # verify-release.sh downloads
 verify/
+/externals

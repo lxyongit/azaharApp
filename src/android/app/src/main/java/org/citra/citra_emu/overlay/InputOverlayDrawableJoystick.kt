@@ -272,6 +272,19 @@ class InputOverlayDrawableJoystick(
         controlPositionY = y
     }
 
+    /** Moves all joystick drawables together so they remain within the overlay. */
+    fun setPositionAndBounds(x: Int, y: Int) {
+        val currentWidth = bounds.width()
+        val currentHeight = bounds.height()
+        val newBounds = Rect(x, y, x + currentWidth, y + currentHeight)
+        bounds = newBounds
+        virtBounds = Rect(newBounds)
+        boundsBoxBitmap.bounds = virtBounds
+        setOrigBounds(Rect(newBounds))
+        setPosition(x, y)
+        setInnerBounds()
+    }
+
     private val currentStateBitmapDrawable: BitmapDrawable
         get() = if (pressedState) pressedStateInnerBitmap else defaultStateInnerBitmap
 

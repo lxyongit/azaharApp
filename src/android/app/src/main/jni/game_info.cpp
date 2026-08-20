@@ -43,6 +43,24 @@ GameInfoData* GetNewGameInfoData(const std::string& path) {
     }
 
     if (!loader || result != Loader::ResultStatus::Success) {
+        // CIA archives are not AppLoaders, so Loader::GetLoader intentionally
+        // cannot provide their metadata. Read the CIA TMD/SMDH directly instead.
+        // This also supports Android's fd:// paths without copying the archive.
+        const auto cia_info = Service::AM::GetCIAInfos(path);
+        if (cia_info.Succeeded()) {
+            const auto& [title_info, cia_smdh] = cia_info.Unwrap();
+            GameInfoData* gid = new GameInfoData();
+            if (cia_smdh) {
+                std::memcpy(&gid->smdh, cia_smdh.get(), sizeof(Loader::SMDH));
+            } else {
+                std::memset(&gid->smdh, 0, sizeof(Loader::SMDH));
+            }
+            gid->loaded = true;
+            gid->title_id = title_info.tid;
+            gid->file_type = Loader::GetFileTypeString(Loader::FileType::CIA, false);
+            return gid;
+        }
+
         GameInfoData* gid = new GameInfoData();
         memset(&gid->smdh, 0, sizeof(Loader::SMDH));
         return gid;

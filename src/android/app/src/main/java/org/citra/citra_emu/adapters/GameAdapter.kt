@@ -576,7 +576,10 @@ class GameAdapter(
         }
 
         bottomSheetView.findViewById<MaterialButton>(R.id.cheats).setOnClickListener {
-            val action = CheatsFragmentDirections.actionGlobalCheatsFragment(holder.game.titleId)
+            val action = CheatsFragmentDirections.actionGlobalCheatsFragment(
+                holder.game.titleId,
+                holder.game.path.removePrefix("!")
+            )
             view.findNavController().navigate(action)
             bottomSheetDialog.dismiss()
         }

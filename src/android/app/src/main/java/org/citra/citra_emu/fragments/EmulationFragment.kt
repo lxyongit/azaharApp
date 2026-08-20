@@ -105,6 +105,7 @@ class EmulationFragment :
     private val args by navArgs<EmulationFragmentArgs>()
 
     private lateinit var game: Game
+    private var romPathForCheats: String = ""
     private lateinit var screenAdjustmentUtil: ScreenAdjustmentUtil
 
     private val emulationViewModel: EmulationViewModel by activityViewModels()
@@ -133,7 +134,27 @@ class EmulationFragment :
         super.onCreate(savedInstanceState)
 
         val intent = requireActivity().intent
+        val externalLaunchData = intent.getStringExtra("externalLaunchData")
+            ?.takeIf { it.isNotBlank() }
+            ?.let(Uri::parse)
+        val thirdPartyRomPath = intent.getStringExtra("filePath")
+            ?.takeIf { it.isNotBlank() }
+            ?.removePrefix("!")
         var intentUri: Uri? = intent.data
+        if (intentUri == null && thirdPartyRomPath != null) {
+            intentUri = Uri.fromFile(File(thirdPartyRomPath))
+        }
+        val intentExtras = intent.extras?.keySet()?.joinToString { key ->
+            "$key=${intent.extras?.get(key)}"
+        }.orEmpty()
+        Log.info(
+            "[APILOG][EmulationFragment] launch data=${intent.data} " +
+                "externalLaunchData=$externalLaunchData " +
+                "dataString=${intent.dataString} action=${intent.action} " +
+                "type=${intent.type} flags=0x${intent.flags.toString(16)} " +
+                "clipData=${intent.clipData} extras={$intentExtras} " +
+                "filePath=$thirdPartyRomPath"
+        )
         val oldIntentInfo = Pair(
             intent.getStringExtra("SelectedGame"),
             intent.getStringExtra("SelectedTitle")
@@ -144,6 +165,9 @@ class EmulationFragment :
         } else {
             intentUri
         }
+        val originalRomPath = externalLaunchData?.let { resolveRomPathForCheats(it) }
+            ?: thirdPartyRomPath
+            ?: intentUri?.let { resolveRomPathForCheats(it) }
         if (intentUri != null) {
             if (!BuildUtil.isGooglePlayBuild) {
                 val intentUriString = intentUri.toString()
@@ -180,8 +204,9 @@ class EmulationFragment :
         val insertedCartridge = preferences.getString("insertedCartridge", "")
         NativeLibrary.setInsertedCartridge(insertedCartridge ?: "")
 
+        val bundledGame = args.game
         try {
-            game = args.game ?: intentGame!!
+            game = bundledGame ?: intentGame!!
         } catch (e: NullPointerException) {
             Toast.makeText(
                 requireContext(),
@@ -191,6 +216,14 @@ class EmulationFragment :
             requireActivity().finish()
             return
         }
+        romPathForCheats = if (originalRomPath != null) {
+            originalRomPath
+        } else if (bundledGame != null) {
+            bundledGame.path.removePrefix("!")
+        } else {
+            originalRomPath ?: game.path.removePrefix("!")
+        }
+        Log.info("[APILOG][EmulationFragment] cheat rom path=$romPathForCheats")
 
         Log.info("[EmulationFragment] Starting application " + game.path)
 
@@ -395,7 +428,10 @@ class EmulationFragment :
 
                 R.id.menu_cheats -> {
                     val action = EmulationNavigationDirections
-                        .actionGlobalCheatsActivity(NativeLibrary.getRunningTitleId())
+                        .actionGlobalCheatsActivity(
+                            NativeLibrary.getRunningTitleId(),
+                            romPathForCheats
+                        )
                     binding.root.findNavController().navigate(action)
                     true
                 }
@@ -515,6 +551,24 @@ class EmulationFragment :
         }
 
         setInsets()
+    }
+
+    private fun resolveRomPathForCheats(uri: Uri): String? {
+        if (uri.authority == "com.gzhuaiyun.retro.provider") {
+            val externalPath = uri.path?.removePrefix("/external/")
+            if (externalPath != null && externalPath != uri.path) {
+                return "/storage/emulated/0/$externalPath"
+            }
+        }
+        if (uri.scheme == null || uri.scheme == "file") {
+            return (uri.path ?: uri.toString()).removePrefix("!")
+        }
+        if (BuildUtil.isGooglePlayBuild) {
+            return uri.toString()
+        }
+        return runCatching { NativeLibrary.getNativePath(uri) }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
     }
 
     fun isDrawerOpen(): Boolean = binding.drawerLayout.isOpen

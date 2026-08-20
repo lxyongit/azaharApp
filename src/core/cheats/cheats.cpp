@@ -43,6 +43,11 @@ void CheatEngine::AddCheat(std::shared_ptr<CheatBase>&& cheat) {
     cheats_list.push_back(std::move(cheat));
 }
 
+void CheatEngine::AddCheatAtBeginning(std::shared_ptr<CheatBase>&& cheat) {
+    std::unique_lock lock{cheats_list_mutex};
+    cheats_list.insert(cheats_list.begin(), std::move(cheat));
+}
+
 void CheatEngine::RemoveCheat(std::size_t index) {
     std::unique_lock lock{cheats_list_mutex};
     if (index < 0 || index >= cheats_list.size()) {

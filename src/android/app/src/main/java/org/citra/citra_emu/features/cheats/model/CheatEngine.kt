@@ -14,6 +14,7 @@ object CheatEngine {
     external fun getCheats(): Array<Cheat>
 
     external fun addCheat(cheat: Cheat?)
+    external fun prependCheat(cheat: Cheat?)
     external fun removeCheat(index: Int)
     external fun updateCheat(index: Int, newCheat: Cheat?)
 }

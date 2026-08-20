@@ -221,8 +221,10 @@ void System::LoadState(u32 slot) {
         // validate header
         SaveStateInfo info;
         info.slot = slot;
-        if (!ValidateSaveState(header, info, title_id, movie_id) ||
-            info.status == SaveStateInfo::ValidationStatus::BuildMismatch) {
+        // Save states are serialized emulator internals. Their build metadata is useful for
+        // display and diagnostics, but should not prevent loading states created by another
+        // Azahar revision or build.
+        if (!ValidateSaveState(header, info, title_id, movie_id)) {
             throw std::runtime_error("Invalid savestate");
         }
 
@@ -296,14 +298,6 @@ bool System::LoadStateBuffer(std::vector<u8> buffer) {
         LOG_ERROR(Core, "Save state isn't for the current game");
         return false;
     }
-    std::string revision = fmt::format("{:02x}", fmt::join(header.revision, ""));
-    if (revision != Common::g_scm_rev) {
-        LOG_ERROR(Core,
-                  "Save state file created from a different revision (core: {}, savestate: {})",
-                  Common::g_scm_rev, revision);
-        return false;
-    }
-
     std::vector<u8> state(buffer.begin() + sizeof(CSTHeader), buffer.end());
     auto decompressed = Common::Compression::DecompressDataZSTD(state);
 

@@ -22,6 +22,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.slidingpanelayout.widget.SlidingPaneLayout
+import android.widget.Toast
 import com.google.android.material.transition.MaterialSharedAxis
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -69,7 +70,7 @@ class CheatsFragment :
         homeViewModel.setNavigationVisibility(visible = false, animated = true)
         homeViewModel.setStatusBarShadeVisibility(visible = false)
 
-        cheatsViewModel.initialize(args.titleId)
+        cheatsViewModel.initialize(args.titleId, args.romPath)
 
         cheatListLastFocus = binding.cheatListContainer
         cheatDetailsLastFocus = binding.cheatDetailsContainer
@@ -124,6 +125,30 @@ class CheatsFragment :
             launch {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
                     cheatsViewModel.detailsViewFocusChange.collect { onDetailsViewFocusChange(it) }
+                }
+            }
+            launch {
+                repeatOnLifecycle(Lifecycle.State.CREATED) {
+                    cheatsViewModel.fetchState.collect { state ->
+                        when (state) {
+                            is CheatsViewModel.FetchState.Loading -> {
+                                binding.cheatsLoading.visibility = View.VISIBLE
+                            }
+                            is CheatsViewModel.FetchState.Success -> {
+                                if (state.loadedFromServer) {
+                                    cheatsViewModel.importFetchedCheats(state.cheats)
+                                }
+                                cheatsViewModel.clearFetchState()
+                            }
+                            is CheatsViewModel.FetchState.Error -> {
+                                Toast.makeText(requireContext(), state.message, Toast.LENGTH_LONG).show()
+                                cheatsViewModel.clearFetchState()
+                            }
+                            is CheatsViewModel.FetchState.Idle -> {
+                                binding.cheatsLoading.visibility = View.GONE
+                            }
+                        }
+                    }
                 }
             }
         }

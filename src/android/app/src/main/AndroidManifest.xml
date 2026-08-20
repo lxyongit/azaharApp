@@ -54,8 +54,8 @@
             <!-- This intentfilter marks this Activity as the one that gets launched from Home screen. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+                <!-- <category android:name="android.intent.category.LAUNCHER"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/> -->
             </intent-filter>
         </activity>
 
@@ -66,9 +66,20 @@
             android:label="@string/preferences_settings"/>
 
         <activity
-            android:name="org.citra.citra_emu.activities.EmulationActivity"
+            android:name="org.citra.citra_emu.activities.GameInfoActivity"
             android:exported="true"
             android:theme="@style/Theme.Citra.Main"
+            android:label="@string/game_information">
+            <intent-filter>
+                <action android:name="com.gzhuaiyun.retro.action.OPEN_AZAHAR_GAME_INFO" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="org.citra.citra_emu.activities.EmulationActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Citra.Splash.Main"
             android:launchMode="singleTop">
 
             <intent-filter>
