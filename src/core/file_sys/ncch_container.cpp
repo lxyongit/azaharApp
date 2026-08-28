@@ -655,12 +655,12 @@ Loader::ResultStatus NCCHContainer::LoadSectionExeFS(const char* name, std::vect
                 if (exefs_file->ReadBytes(buffer.data(), section_size) != section_size)
                     return Loader::ResultStatus::Error;
                 if (is_encrypted) {
-                    const auto& key = (strcmp(section.name, "icon") == 0 ||
-                                       strcmp(section.name, "banner") == 0)
-                                          ? primary_key
-                                          : secondary_key;
+                    const auto& key =
+                        (strcmp(section.name, "icon") == 0 || strcmp(section.name, "banner") == 0)
+                            ? primary_key
+                            : secondary_key;
                     CryptoPP::CTR_Mode<CryptoPP::AES>::Decryption decryption(key.data(), key.size(),
-                                                                               exefs_ctr.data());
+                                                                             exefs_ctr.data());
                     decryption.Seek(section.offset + sizeof(ExeFs_Header));
                     decryption.ProcessData(buffer.data(), buffer.data(), section.size);
                 }
@@ -807,7 +807,7 @@ Loader::ResultStatus NCCHContainer::ReadRomFS(std::shared_ptr<RomFSReader>& romf
     std::shared_ptr<RomFSReader> direct_romfs;
     if (is_encrypted) {
         direct_romfs = std::make_shared<DirectRomFSReader>(std::move(romfs_data), secondary_key,
-                                                            romfs_ctr, 0x1000);
+                                                           romfs_ctr, 0x1000);
     } else {
         direct_romfs = std::make_shared<DirectRomFSReader>(std::move(romfs_data));
     }
