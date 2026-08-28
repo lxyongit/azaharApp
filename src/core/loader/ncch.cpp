@@ -135,8 +135,7 @@ ResultStatus AppLoader_NCCH::LoadExec(std::shared_ptr<Kernel::Process>& process)
     u64_le program_id;
     const ResultStatus program_id_result = ReadProgramId(program_id);
     if (program_id_result != ResultStatus::Success) {
-        LOG_ERROR(Loader, "[NCCH-CRYPTO] Failed to read program ID (Error {})",
-                  program_id_result);
+        LOG_ERROR(Loader, "[NCCH-CRYPTO] Failed to read program ID (Error {})", program_id_result);
         return program_id_result;
     }
 
