@@ -47,6 +47,7 @@
 #include "citra_qt/citra_qt.h"
 #include "citra_qt/compatibility_list.h"
 #include "citra_qt/configuration/config.h"
+#include "citra_qt/configuration/configure_cheats.h"
 #include "citra_qt/configuration/configure_dialog.h"
 #include "citra_qt/configuration/configure_per_game.h"
 #include "citra_qt/debugger/console.h"
@@ -324,6 +325,36 @@ GMainWindow::GMainWindow(Core::System& system_)
             continue;
         }
 
+        // Third-party launchers use vip=1 for VIP users and vip=0 for other users.
+        // Accept both common command-line spellings so their existing integrations keep working.
+        if (args[i] == QStringLiteral("--vip") || args[i] == QStringLiteral("vip")) {
+            if (i < args.size() - 1) {
+                const QString value = args[++i];
+                if (value == QStringLiteral("0")) {
+                    is_vip = false;
+                } else if (value == QStringLiteral("1")) {
+                    is_vip = true;
+                } else {
+                    LOG_WARNING(Frontend, "Ignoring invalid VIP launch parameter '{}'.",
+                                value.toStdString());
+                }
+            }
+            continue;
+        }
+        if (args[i].startsWith(QStringLiteral("--vip=")) ||
+            args[i].startsWith(QStringLiteral("vip="))) {
+            const QString value = args[i].section(QLatin1Char{'='}, 1);
+            if (value == QStringLiteral("0")) {
+                is_vip = false;
+            } else if (value == QStringLiteral("1")) {
+                is_vip = true;
+            } else {
+                LOG_WARNING(Frontend, "Ignoring invalid VIP launch parameter '{}'.",
+                            value.toStdString());
+            }
+            continue;
+        }
+
         // Enable GDB stub
         if (args[i] == QStringLiteral("--gdbport") || args[i] == QStringLiteral("-g")) {
             if (i >= args.size() - 1 || args[i + 1].startsWith(QChar::fromLatin1('-'))) {
@@ -419,8 +450,8 @@ GMainWindow::GMainWindow(Core::System& system_)
             continue;
         }
 
-        // Launch game at path
-        if (i == args.size() - 1 && !args[i].startsWith(QChar::fromLatin1('-'))) {
+        // Launch game at path. Third-party launchers can append options after the game path.
+        if (!args[i].startsWith(QChar::fromLatin1('-'))) {
             game_path = args[i];
             continue;
         }
@@ -1175,6 +1206,7 @@ void GMainWindow::ConnectMenuEvents() {
     });
     connect_menu(ui->action_Configure, &GMainWindow::OnConfigure, QAction::PreferencesRole);
     connect_menu(ui->action_Configure_Current_Game, &GMainWindow::OnConfigurePerGame);
+    connect_menu(ui->action_Manage_Cheats, &GMainWindow::OnManageCheats);
 
     // View
     connect_menu(ui->action_Single_Window_Mode, &GMainWindow::ToggleWindowMode);
@@ -1272,6 +1304,7 @@ void GMainWindow::UpdateMenuState() {
         ui->action_Stop,
         ui->action_Restart,
         ui->action_Configure_Current_Game,
+        ui->action_Manage_Cheats,
         ui->action_Report_Compatibility,
         ui->action_Load_Amiibo,
         ui->action_Remove_Amiibo,
@@ -4302,9 +4335,26 @@ void GMainWindow::OnConfigurePerGame() {
     OpenPerGameConfiguration(title_id, game_path);
 }
 
+void GMainWindow::OnManageCheats() {
+    QDialog dialog{this};
+    dialog.setWindowTitle(tr("金手指"));
+    auto* layout = new QVBoxLayout{&dialog};
+    auto* cheats =
+        new ConfigureCheats{system.CheatEngine(), game_title_id, game_path, is_vip, &dialog};
+    layout->addWidget(cheats);
+
+    auto* buttons = new QDialogButtonBox{QDialogButtonBox::Close, &dialog};
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    dialog.exec();
+    cheats->ApplyConfiguration();
+}
+
 void GMainWindow::OpenPerGameConfiguration(u64 title_id, const QString& file_name) {
     Settings::SetConfiguringGlobal(false);
-    ConfigurePerGame dialog(this, title_id, file_name, gl_renderer, physical_devices, system);
+    ConfigurePerGame dialog(this, title_id, file_name, gl_renderer, physical_devices, system,
+                            is_vip);
     const auto result = dialog.exec();
 
     if (result != QDialog::Accepted) {

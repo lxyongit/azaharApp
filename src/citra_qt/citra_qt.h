@@ -251,6 +251,7 @@ private slots:
     void OnGameListShowList(bool show);
     void OnGameListOpenPerGameProperties(const QString& file);
     void OnConfigurePerGame();
+    void OnManageCheats();
     void OnMenuLoadFile();
     void OnMenuSetUpSystemFiles();
     void OnMenuInstallCIA();
@@ -389,6 +390,8 @@ private:
     QString game_path;
     // The title id of the game currently running
     u64 game_title_id;
+    // Third-party launchers may set this with the vip command-line parameter.
+    bool is_vip = true;
 
     bool auto_paused = false;
     bool auto_muted = false;

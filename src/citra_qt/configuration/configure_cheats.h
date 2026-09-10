@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <span>
+#include <QList>
 #include <QWidget>
 #include "common/common_types.h"
 
@@ -22,11 +23,19 @@ namespace Ui {
 class ConfigureCheats;
 } // namespace Ui
 
+class QNetworkAccessManager;
+
+struct FetchedCheat {
+    QString name;
+    QString code;
+};
+
 class ConfigureCheats : public QWidget {
     Q_OBJECT
 
 public:
     explicit ConfigureCheats(Cheats::CheatEngine& cheat_engine, u64 title_id_,
+                             const QString& rom_path = {}, bool cheats_editable = true,
                              QWidget* parent = nullptr);
     ~ConfigureCheats();
     bool ApplyConfiguration();
@@ -50,6 +59,8 @@ private:
      * @return true if the cheat is saved successfully, false otherwise
      */
     bool SaveCheat(int row);
+    void FetchServerCheats(const QString& rom_path);
+    void ImportServerCheats(const QList<FetchedCheat>& fetched_cheats);
 
 private slots:
     void OnRowSelected(int row, int column);
@@ -60,9 +71,11 @@ private slots:
 
 private:
     std::unique_ptr<Ui::ConfigureCheats> ui;
+    std::unique_ptr<QNetworkAccessManager> cheat_server_manager;
     Cheats::CheatEngine& cheat_engine;
     std::span<const std::shared_ptr<Cheats::CheatBase>> cheats;
     bool edited = false, newly_created = false;
+    bool cheats_editable;
     int last_row = -1, last_col = -1;
     u64 title_id;
 };
