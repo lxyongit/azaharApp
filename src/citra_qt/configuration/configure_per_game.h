@@ -40,7 +40,7 @@ class ConfigurePerGame : public QDialog {
 public:
     explicit ConfigurePerGame(QWidget* parent, u64 title_id_, const QString& file_name,
                               QString gl_renderer, std::span<const QString> physical_devices,
-                              Core::System& system_);
+                              Core::System& system_, bool cheats_editable = true);
     ~ConfigurePerGame() override;
 
     /// Loads all button configurations to settings file

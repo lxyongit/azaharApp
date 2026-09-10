@@ -3,18 +3,45 @@
 // Refer to the misc/licenses/gplv2.txt file included.
 
 #include <QCheckBox>
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSignalBlocker>
+#include <QSet>
 #include <QTableWidgetItem>
+#include <QUrl>
 #include <QtGlobal>
 #include "configure_cheats.h"
+#include "common/logging/log.h"
 #include "core/cheats/cheat_base.h"
 #include "core/cheats/cheats.h"
 #include "core/cheats/gateway_cheat.h"
 #include "ui_configure_cheats.h"
 
-ConfigureCheats::ConfigureCheats(Cheats::CheatEngine& cheat_engine_, u64 title_id_, QWidget* parent)
+namespace {
+
+constexpr auto cheat_server_url = "https://mpgame.lxyong.com/api/app/get-3ds-cheat";
+constexpr auto server_origin = "azaharplus:origin=local-server";
+
+QString CheatKey(const QString& name, const QString& code) {
+    return name.trimmed() + QChar::Null + code.trimmed();
+}
+
+bool IsServerCheat(const QString& notes) {
+    return notes.split(QLatin1Char{'\n'}).contains(QString::fromLatin1(server_origin));
+}
+
+} // namespace
+
+ConfigureCheats::ConfigureCheats(Cheats::CheatEngine& cheat_engine_, u64 title_id_,
+                                 const QString& rom_path, bool cheats_editable_, QWidget* parent)
     : QWidget(parent), ui(std::make_unique<Ui::ConfigureCheats>()), cheat_engine{cheat_engine_},
-      title_id{title_id_} {
+      cheats_editable{cheats_editable_}, title_id{title_id_} {
     // Setup gui control settings
     ui->setupUi(this);
     ui->tableCheats->setColumnWidth(0, 30);
@@ -25,6 +52,7 @@ ConfigureCheats::ConfigureCheats(Cheats::CheatEngine& cheat_engine_, u64 title_i
     ui->lineName->setEnabled(false);
     ui->textCode->setEnabled(false);
     ui->textNotes->setEnabled(false);
+    ui->buttonAddCheat->setEnabled(cheats_editable);
 
     connect(ui->buttonAddCheat, &QPushButton::clicked, this, &ConfigureCheats::OnAddCheat);
     connect(ui->tableCheats, &QTableWidget::cellClicked, this, &ConfigureCheats::OnRowSelected);
@@ -38,6 +66,7 @@ ConfigureCheats::ConfigureCheats(Cheats::CheatEngine& cheat_engine_, u64 title_i
 
     cheat_engine.LoadCheatFile(title_id);
     LoadCheats();
+    FetchServerCheats(rom_path);
 }
 
 ConfigureCheats::~ConfigureCheats() = default;
@@ -68,6 +97,132 @@ void ConfigureCheats::LoadCheats() {
     }
 }
 
+void ConfigureCheats::FetchServerCheats(const QString& rom_path) {
+    const QString path = rom_path.startsWith(QLatin1Char{'!'}) ? rom_path.sliced(1) : rom_path;
+    if (title_id == 0 || path.isEmpty()) {
+        LOG_WARNING(Frontend, "Skipping cheat server request without a game ID or ROM path.");
+        return;
+    }
+
+    ui->labelAvailableCheats->setText(tr("正在获取金手指..."));
+    cheat_server_manager = std::make_unique<QNetworkAccessManager>(this);
+
+    QNetworkRequest request{QUrl{QString::fromLatin1(cheat_server_url)}};
+    request.setHeader(QNetworkRequest::ContentTypeHeader,
+                      QStringLiteral("application/json; charset=utf-8"));
+    request.setRawHeader(QByteArrayLiteral("Accept"), QByteArrayLiteral("application/json"));
+
+    QJsonObject payload{
+        {QStringLiteral("gameId"),
+         QString::number(title_id, 16).rightJustified(16, QLatin1Char{'0'}).toUpper()},
+        {QStringLiteral("romPath"), path},
+    };
+    const QByteArray body = QJsonDocument{payload}.toJson(QJsonDocument::Compact);
+    LOG_INFO(Frontend, "Requesting cheats for title {:016X}.", title_id);
+    QNetworkReply* reply = cheat_server_manager->post(request, body);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            LOG_WARNING(Frontend, "Cheat server request failed: {}",
+                        reply->errorString().toStdString());
+            ui->labelAvailableCheats->setText(tr("获取金手指失败"));
+            return;
+        }
+
+        const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+        const QJsonObject response = document.object();
+        if (!response.value(QStringLiteral("success")).toBool()) {
+            LOG_WARNING(Frontend, "Cheat server returned an error: {}",
+                        response.value(QStringLiteral("msg")).toString().toStdString());
+            ui->labelAvailableCheats->setText(tr("获取金手指失败"));
+            return;
+        }
+
+        QList<FetchedCheat> fetched_cheats;
+        for (const QJsonValue& group_value : response.value(QStringLiteral("data")).toArray()) {
+            const QJsonObject group = group_value.toObject();
+            const QString title = group.value(QStringLiteral("title")).toString().trimmed();
+            for (const QJsonValue& option_value :
+                 group.value(QStringLiteral("options")).toArray()) {
+                const QJsonObject option = option_value.toObject();
+                const QJsonValue value = option.value(QStringLiteral("value"));
+                QString code;
+                if (value.isString()) {
+                    code = value.toString();
+                } else if (value.isArray()) {
+                    QStringList lines;
+                    bool valid = true;
+                    for (const QJsonValue& line : value.toArray()) {
+                        if (!line.isString()) {
+                            valid = false;
+                            break;
+                        }
+                        lines.append(line.toString());
+                    }
+                    if (valid) {
+                        code = lines.join(QLatin1Char{'\n'});
+                    }
+                }
+
+                const QString description =
+                    option.value(QStringLiteral("description")).toString().trimmed();
+                QString name = title;
+                if (!description.isEmpty()) {
+                    name = name.isEmpty() ? description
+                                          : name + QStringLiteral(" - ") + description;
+                }
+                if (!name.isEmpty() && !code.trimmed().isEmpty()) {
+                    fetched_cheats.append({name, code});
+                }
+            }
+        }
+
+        LOG_INFO(Frontend, "Loaded {} cheats from the cheat server.", fetched_cheats.size());
+        ImportServerCheats(fetched_cheats);
+        ui->labelAvailableCheats->setText(tr("可用金手指："));
+    });
+}
+
+void ConfigureCheats::ImportServerCheats(const QList<FetchedCheat>& fetched_cheats) {
+    QSet<QString> fetched_keys;
+    for (const FetchedCheat& fetched : fetched_cheats) {
+        fetched_keys.insert(CheatKey(fetched.name, fetched.code));
+    }
+
+    QHash<QString, bool> enabled_states;
+    const auto current_cheats = cheat_engine.GetCheats();
+    for (const auto& cheat : current_cheats) {
+        const QString name = QString::fromStdString(cheat->GetName());
+        const QString code = QString::fromStdString(cheat->GetCode());
+        const QString notes = QString::fromStdString(cheat->GetComments());
+        const QString key = CheatKey(name, code);
+        if (IsServerCheat(notes) || fetched_keys.contains(key)) {
+            enabled_states.insert(key, cheat->IsEnabled());
+        }
+    }
+
+    for (std::size_t index = current_cheats.size(); index > 0; --index) {
+        const auto& cheat = current_cheats[index - 1];
+        const QString key = CheatKey(QString::fromStdString(cheat->GetName()),
+                                     QString::fromStdString(cheat->GetCode()));
+        if (IsServerCheat(QString::fromStdString(cheat->GetComments())) ||
+            fetched_keys.contains(key)) {
+            cheat_engine.RemoveCheat(index - 1);
+        }
+    }
+
+    for (const FetchedCheat& fetched : fetched_cheats) {
+        auto cheat = std::make_shared<Cheats::GatewayCheat>(
+            fetched.name.toStdString(), fetched.code.toStdString(), std::string{server_origin});
+        cheat->SetEnabled(enabled_states.value(CheatKey(fetched.name, fetched.code), false));
+        cheat_engine.AddCheat(std::move(cheat));
+    }
+    if (cheats_editable) {
+        cheat_engine.SaveCheatFile(title_id);
+    }
+    LoadCheats();
+}
+
 bool ConfigureCheats::CheckSaveCheat() {
     auto answer = QMessageBox::warning(
         this, tr("Cheats"), tr("Would you like to save the current cheat?"),
@@ -81,6 +236,9 @@ bool ConfigureCheats::CheckSaveCheat() {
 }
 
 bool ConfigureCheats::SaveCheat(int row) {
+    if (!cheats_editable) {
+        return false;
+    }
     if (ui->lineName->text().isEmpty()) {
         QMessageBox::critical(this, tr("Save Cheat"), tr("Please enter a cheat name."));
         return false;
@@ -125,7 +283,7 @@ bool ConfigureCheats::SaveCheat(int row) {
 
     edited = false;
     ui->buttonSave->setEnabled(false);
-    ui->buttonAddCheat->setEnabled(true);
+    ui->buttonAddCheat->setEnabled(cheats_editable);
     return true;
 }
 
@@ -152,29 +310,43 @@ void ConfigureCheats::OnRowSelected(int row, int column) {
 
     edited = false;
     ui->buttonSave->setEnabled(false);
-    ui->buttonDelete->setEnabled(true);
-    ui->buttonAddCheat->setEnabled(true);
-    ui->lineName->setEnabled(true);
-    ui->textCode->setEnabled(true);
-    ui->textNotes->setEnabled(true);
+    ui->buttonDelete->setEnabled(cheats_editable);
+    ui->buttonAddCheat->setEnabled(cheats_editable);
+    ui->lineName->setEnabled(cheats_editable);
+    ui->textCode->setEnabled(cheats_editable);
+    ui->textNotes->setEnabled(cheats_editable);
 
     last_row = row;
     last_col = column;
 }
 
 void ConfigureCheats::OnCheckChanged(int state) {
-    const QCheckBox* checkbox = qobject_cast<QCheckBox*>(sender());
+    QCheckBox* checkbox = qobject_cast<QCheckBox*>(sender());
+    if (!cheats_editable) {
+        if (state != Qt::Unchecked) {
+            const QSignalBlocker blocker{checkbox};
+            checkbox->setChecked(false);
+            QMessageBox::information(this, tr("金手指"), tr("金手指功能需要开通vip"));
+        }
+        return;
+    }
     int row = static_cast<int>(checkbox->property("row").toInt());
     cheats[row]->SetEnabled(state);
     cheat_engine.SaveCheatFile(title_id);
 }
 
 void ConfigureCheats::OnTextEdited() {
+    if (!cheats_editable) {
+        return;
+    }
     edited = true;
     ui->buttonSave->setEnabled(true);
 }
 
 void ConfigureCheats::OnDeleteCheat() {
+    if (!cheats_editable) {
+        return;
+    }
     if (newly_created) {
         newly_created = false;
     } else {
@@ -206,17 +378,20 @@ void ConfigureCheats::OnDeleteCheat() {
 
     edited = false;
     ui->buttonSave->setEnabled(false);
-    ui->buttonAddCheat->setEnabled(true);
+    ui->buttonAddCheat->setEnabled(cheats_editable);
 }
 
 bool ConfigureCheats::ApplyConfiguration() {
-    if (edited) {
+    if (cheats_editable && edited) {
         return SaveCheat(ui->tableCheats->currentRow());
     }
     return true;
 }
 
 void ConfigureCheats::OnAddCheat() {
+    if (!cheats_editable) {
+        return;
+    }
     if (edited && !CheckSaveCheat()) {
         return;
     }

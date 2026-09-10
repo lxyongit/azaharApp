@@ -250,6 +250,12 @@
     <addaction name="separator"/>
     <addaction name="menu_View_Debugging"/>
    </widget>
+   <widget class="QMenu" name="menu_Cheats">
+    <property name="title">
+     <string>金手指</string>
+    </property>
+    <addaction name="action_Manage_Cheats"/>
+   </widget>
    <widget class="QMenu" name="menu_Multiplayer">
     <property name="enabled">
      <bool>true</bool>
@@ -315,6 +321,7 @@
    </widget>
    <addaction name="menu_File"/>
    <addaction name="menu_Emulation"/>
+   <addaction name="menu_Cheats"/>
    <addaction name="menu_View"/>
    <addaction name="menu_Multiplayer"/>
    <addaction name="menu_Tools"/>
@@ -916,6 +923,14 @@
    </property>
    <property name="menuRole">
     <enum>QAction::NoRole</enum>
+   </property>
+  </action>
+  <action name="action_Manage_Cheats">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>管理金手指</string>
    </property>
   </action>
  </widget>
