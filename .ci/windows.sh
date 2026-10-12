@@ -1,10 +1,17 @@
 #!/bin/bash -ex
 
+apply_dependency_patch() {
+    local dependency="$1"
+    local patch_file="$(pwd)/.ci/patches/$2"
+    if ! git -C "externals/$dependency" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+        git -C "externals/$dependency" apply "$patch_file"
+    fi
+}
+
 # Dynarmic's IR emitter header uses std::vector without including <vector>.
-DYNARMIC_PATCH="$(pwd)/.ci/patches/dynarmic-include-vector.patch"
-if ! git -C externals/dynarmic apply --reverse --check "$DYNARMIC_PATCH" >/dev/null 2>&1; then
-    git -C externals/dynarmic apply "$DYNARMIC_PATCH"
-fi
+apply_dependency_patch dynarmic dynarmic-include-vector.patch
+# LibreSSL's Windows endian shim must define conversions even if endian.h exists.
+apply_dependency_patch libressl libressl-windows-endian.patch
 
 mkdir -p build
 cd build
@@ -17,6 +24,10 @@ fi
 if [ "$TARGET" == "msvc" ] && [ -n "$FFMPEG_ROOT" ]; then
     # Also exposes the FFmpeg DLL directory to the bundle target.
     EXTRA_CMAKE_FLAGS+=("-DCMAKE_PREFIX_PATH=$FFMPEG_ROOT")
+fi
+
+if [ "$TARGET" == "msvc" ] && [ -n "$ZLIB_ROOT" ]; then
+    EXTRA_CMAKE_FLAGS+=("-DZLIB_ROOT=$ZLIB_ROOT" -DZLIB_USE_STATIC_LIBS=ON)
 fi
 
 cmake .. -G Ninja \

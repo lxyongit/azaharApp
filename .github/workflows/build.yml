@@ -173,6 +173,22 @@ jobs:
       - name: Install extra tools (MSVC)
         if: ${{ matrix.target == 'msvc' }}
         run: choco install ccache ninja ptime wget
+      - name: Install ZLIB development libraries (MSVC)
+        if: ${{ matrix.target == 'msvc' }}
+        shell: pwsh
+        run: |
+          $zlibVersion = "1.3.1"
+          $zlibArchive = Join-Path $env:RUNNER_TEMP "zlib-$zlibVersion.zip"
+          $zlibSource = Join-Path $env:RUNNER_TEMP "zlib-$zlibVersion"
+          $zlibBuild = Join-Path $env:RUNNER_TEMP "zlib-build"
+          $zlibRoot = (Join-Path $env:RUNNER_TEMP "zlib-install").Replace('\', '/')
+          Invoke-WebRequest -Uri "https://github.com/madler/zlib/archive/refs/tags/v$zlibVersion.zip" -OutFile $zlibArchive
+          Expand-Archive -Path $zlibArchive -DestinationPath $env:RUNNER_TEMP -Force
+          cmake -S $zlibSource -B $zlibBuild -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$zlibRoot" -DZLIB_BUILD_EXAMPLES=OFF
+          if ($LASTEXITCODE -ne 0) { throw "ZLIB configuration failed" }
+          cmake --build $zlibBuild --target install
+          if ($LASTEXITCODE -ne 0) { throw "ZLIB installation failed" }
+          "ZLIB_ROOT=$zlibRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install FFmpeg development libraries (MSVC)
         if: ${{ matrix.target == 'msvc' }}
         shell: pwsh
