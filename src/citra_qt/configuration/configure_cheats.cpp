@@ -3,16 +3,19 @@
 // Refer to the misc/licenses/gplv2.txt file included.
 
 #include <QCheckBox>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSignalBlocker>
 #include <QSet>
+#include <QSslError>
 #include <QTableWidgetItem>
 #include <QUrl>
 #include <QtGlobal>
@@ -64,12 +67,28 @@ ConfigureCheats::ConfigureCheats(Cheats::CheatEngine& cheat_engine_, u64 title_i
             [this] { SaveCheat(ui->tableCheats->currentRow()); });
     connect(ui->buttonDelete, &QPushButton::clicked, this, &ConfigureCheats::OnDeleteCheat);
 
+    LOG_INFO(Frontend,
+             "[CheatServer] Initializing cheats page: title_id={:016X}, rom_path='{}', editable={}",
+             title_id, rom_path.toStdString(), cheats_editable);
     cheat_engine.LoadCheatFile(title_id);
     LoadCheats();
+    LOG_INFO(Frontend, "[CheatServer] Loaded {} local cheats for title {:016X}", cheats.size(),
+             title_id);
     FetchServerCheats(rom_path);
 }
 
-ConfigureCheats::~ConfigureCheats() = default;
+ConfigureCheats::~ConfigureCheats() {
+    if (cheat_server_manager) {
+        for (const auto* reply : cheat_server_manager->findChildren<QNetworkReply*>()) {
+            if (!reply->isFinished()) {
+                LOG_WARNING(Frontend,
+                            "[CheatServer] Closing page with request still pending: "
+                            "title_id={:016X}, url='{}'",
+                            title_id, reply->url().toString().toStdString());
+            }
+        }
+    }
+}
 
 void ConfigureCheats::LoadCheats() {
     cheats = cheat_engine.GetCheats();
@@ -100,7 +119,10 @@ void ConfigureCheats::LoadCheats() {
 void ConfigureCheats::FetchServerCheats(const QString& rom_path) {
     const QString path = rom_path.startsWith(QLatin1Char{'!'}) ? rom_path.sliced(1) : rom_path;
     if (title_id == 0 || path.isEmpty()) {
-        LOG_WARNING(Frontend, "Skipping cheat server request without a game ID or ROM path.");
+        LOG_WARNING(Frontend,
+                    "[CheatServer] Skipping request: title_id={:016X}, missing_game_id={}, "
+                    "missing_rom_path={}, rom_path='{}'",
+                    title_id, title_id == 0, path.isEmpty(), rom_path.toStdString());
         return;
     }
 
@@ -118,32 +140,70 @@ void ConfigureCheats::FetchServerCheats(const QString& rom_path) {
         {QStringLiteral("romPath"), path},
     };
     const QByteArray body = QJsonDocument{payload}.toJson(QJsonDocument::Compact);
-    LOG_INFO(Frontend, "Requesting cheats for title {:016X}.", title_id);
+    LOG_INFO(Frontend, "[CheatServer] Sending POST: url='{}', payload={}", cheat_server_url,
+             body.toStdString());
+    QElapsedTimer timer;
+    timer.start();
     QNetworkReply* reply = cheat_server_manager->post(request, body);
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    LOG_INFO(Frontend, "[CheatServer] POST queued for title {:016X}", title_id);
+    connect(reply, &QNetworkReply::sslErrors, this, [this](const QList<QSslError>& errors) {
+        for (const auto& error : errors) {
+            LOG_WARNING(Frontend, "[CheatServer] TLS error for title {:016X}: {}", title_id,
+                        error.errorString().toStdString());
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, timer] {
         reply->deleteLater();
+        const QByteArray response_body = reply->readAll();
+        const int http_status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        LOG_INFO(Frontend,
+                 "[CheatServer] Request finished: title_id={:016X}, url='{}', http_status={}, "
+                 "network_error={}, elapsed_ms={}, response_bytes={}",
+                 title_id, reply->url().toString().toStdString(), http_status,
+                 static_cast<int>(reply->error()), timer.elapsed(), response_body.size());
         if (reply->error() != QNetworkReply::NoError) {
-            LOG_WARNING(Frontend, "Cheat server request failed: {}",
-                        reply->errorString().toStdString());
+            LOG_WARNING(Frontend,
+                        "[CheatServer] Request failed for title {:016X}: {}, response_preview={}",
+                        title_id, reply->errorString().toStdString(),
+                        response_body.left(1024).toStdString());
             ui->labelAvailableCheats->setText(tr("获取金手指失败"));
             return;
         }
 
-        const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+        QJsonParseError parse_error;
+        const QJsonDocument document = QJsonDocument::fromJson(response_body, &parse_error);
+        if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
+            LOG_WARNING(Frontend,
+                        "[CheatServer] Invalid JSON response for title {:016X}: error='{}', "
+                        "offset={}, is_object={}, response_preview={}",
+                        title_id, parse_error.errorString().toStdString(), parse_error.offset,
+                        document.isObject(), response_body.left(1024).toStdString());
+            ui->labelAvailableCheats->setText(tr("获取金手指失败"));
+            return;
+        }
         const QJsonObject response = document.object();
         if (!response.value(QStringLiteral("success")).toBool()) {
-            LOG_WARNING(Frontend, "Cheat server returned an error: {}",
-                        response.value(QStringLiteral("msg")).toString().toStdString());
+            LOG_WARNING(Frontend,
+                        "[CheatServer] Server rejected request for title {:016X}: msg='{}', "
+                        "response_preview={}",
+                        title_id, response.value(QStringLiteral("msg")).toString().toStdString(),
+                        response_body.left(1024).toStdString());
             ui->labelAvailableCheats->setText(tr("获取金手指失败"));
             return;
         }
 
         QList<FetchedCheat> fetched_cheats;
-        for (const QJsonValue& group_value : response.value(QStringLiteral("data")).toArray()) {
+        const QJsonArray groups = response.value(QStringLiteral("data")).toArray();
+        int option_count = 0;
+        int skipped_count = 0;
+        LOG_INFO(Frontend, "[CheatServer] Response accepted: title_id={:016X}, data_is_array={}",
+                 title_id, response.value(QStringLiteral("data")).isArray());
+        for (const QJsonValue& group_value : groups) {
             const QJsonObject group = group_value.toObject();
             const QString title = group.value(QStringLiteral("title")).toString().trimmed();
             for (const QJsonValue& option_value :
                  group.value(QStringLiteral("options")).toArray()) {
+                ++option_count;
                 const QJsonObject option = option_value.toObject();
                 const QJsonValue value = option.value(QStringLiteral("value"));
                 QString code;
@@ -173,11 +233,16 @@ void ConfigureCheats::FetchServerCheats(const QString& rom_path) {
                 }
                 if (!name.isEmpty() && !code.trimmed().isEmpty()) {
                     fetched_cheats.append({name, code});
+                } else {
+                    ++skipped_count;
                 }
             }
         }
 
-        LOG_INFO(Frontend, "Loaded {} cheats from the cheat server.", fetched_cheats.size());
+        LOG_INFO(Frontend,
+                 "[CheatServer] Parsed response: title_id={:016X}, groups={}, options={}, "
+                 "cheats={}, skipped_empty_or_invalid={}",
+                 title_id, groups.size(), option_count, fetched_cheats.size(), skipped_count);
         ImportServerCheats(fetched_cheats);
         ui->labelAvailableCheats->setText(tr("可用金手指："));
     });
@@ -191,6 +256,8 @@ void ConfigureCheats::ImportServerCheats(const QList<FetchedCheat>& fetched_chea
 
     QHash<QString, bool> enabled_states;
     const auto current_cheats = cheat_engine.GetCheats();
+    const auto previous_count = current_cheats.size();
+    std::size_t removed_count = 0;
     for (const auto& cheat : current_cheats) {
         const QString name = QString::fromStdString(cheat->GetName());
         const QString code = QString::fromStdString(cheat->GetCode());
@@ -208,6 +275,7 @@ void ConfigureCheats::ImportServerCheats(const QList<FetchedCheat>& fetched_chea
         if (IsServerCheat(QString::fromStdString(cheat->GetComments())) ||
             fetched_keys.contains(key)) {
             cheat_engine.RemoveCheat(index - 1);
+            ++removed_count;
         }
     }
 
@@ -221,6 +289,11 @@ void ConfigureCheats::ImportServerCheats(const QList<FetchedCheat>& fetched_chea
         cheat_engine.SaveCheatFile(title_id);
     }
     LoadCheats();
+    LOG_INFO(Frontend,
+             "[CheatServer] Import complete: title_id={:016X}, previous={}, removed={}, "
+             "imported={}, total={}, save_requested={}",
+             title_id, previous_count, removed_count, fetched_cheats.size(), cheats.size(),
+             cheats_editable);
 }
 
 bool ConfigureCheats::CheckSaveCheat() {

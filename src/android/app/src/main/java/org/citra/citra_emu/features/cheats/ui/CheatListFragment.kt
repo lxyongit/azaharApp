@@ -60,6 +60,13 @@ class CheatListFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.apply {
             launch {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
+                    cheatsViewModel.cheatsReloadedEvent.collect {
+                        binding.cheatList.adapter?.notifyDataSetChanged()
+                    }
+                }
+            }
+            launch {
+                repeatOnLifecycle(Lifecycle.State.CREATED) {
                     cheatsViewModel.cheatAddedEvent.collect { position: Int? ->
                         position?.let {
                             binding.cheatList.apply {

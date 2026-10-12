@@ -89,6 +89,7 @@
 #include "common/arch.h"
 #include "common/common_paths.h"
 #include "common/dynamic_library.h"
+#include "common/file_derived.h"
 #include "common/file_util.h"
 #include "common/literals.h"
 #include "common/logging/backend.h"
@@ -107,6 +108,7 @@
 #include "core/dumping/backend.h"
 #include "core/file_sys/archive_extsavedata.h"
 #include "core/file_sys/archive_source_sd_savedata.h"
+#include "core/file_sys/cia_container.h"
 #include "core/frontend/applets/default_applets.h"
 #include "core/hle/service/am/am.h"
 #include "core/hle/service/fs/archive.h"
@@ -2733,7 +2735,39 @@ void GMainWindow::BootGame(const QString& filename) {
                           filename.startsWith(QString::fromStdString("articinio:/")) ||
                           filename.startsWith(QString::fromStdString("articinin:/"));
 
-    if (!is_artic && filename.endsWith(QStringLiteral(".cia"))) {
+    if (!is_artic &&
+        (filename.endsWith(QStringLiteral(".cia"), Qt::CaseInsensitive) ||
+         filename.endsWith(QStringLiteral(".zcia"), Qt::CaseInsensitive))) {
+        // External launchers may keep passing the original archive after installation.
+        // Resolve its title ID to the installed executable before offering to install it.
+        std::unique_ptr<FileUtil::IOFileBase> cia_file =
+            std::make_unique<FileUtil::IOFile>(filename.toStdString(), "rb");
+        if (FileUtil::Z3DSReadIOFile::GetUnderlyingFileMagic(cia_file.get())) {
+            cia_file = std::make_unique<FileUtil::Z3DSReadIOFile>(std::move(cia_file));
+        }
+        FileSys::CIAContainer cia;
+        if (cia.Load(cia_file.get()) == Loader::ResultStatus::Success) {
+            const u64 cia_title_id = cia.GetTitleMetadata().GetTitleID();
+            const auto installed_path = Service::AM::GetTitleContentPath(
+                Service::AM::GetTitleMediaType(cia_title_id), cia_title_id);
+            if (cia_title_id != 0 && FileUtil::Exists(installed_path)) {
+                const auto installed_loader = Loader::GetLoader(installed_path);
+                bool executable = false;
+                u64 installed_title_id = 0;
+                if (installed_loader &&
+                    installed_loader->ReadProgramId(installed_title_id) ==
+                        Loader::ResultStatus::Success &&
+                    installed_title_id == cia_title_id &&
+                    installed_loader->IsExecutable(executable) == Loader::ResultStatus::Success &&
+                    executable) {
+                    LOG_INFO(Frontend, "Launching installed CIA title {:016X} from {}", cia_title_id,
+                             installed_path);
+                    BootGame(QString::fromStdString(installed_path));
+                    return;
+                }
+            }
+        }
+
         const auto answer = QMessageBox::question(
             this, tr("CIA must be installed before usage"),
             tr("Before using this CIA, you must install it. Do you want to install it now?"),
@@ -5729,6 +5763,9 @@ void GMainWindow::OnConfigurePerGame() {
 }
 
 void GMainWindow::OnManageCheats() {
+    LOG_INFO(Frontend,
+             "[CheatServer] Opening cheats dialog: title_id={:016X}, rom_path='{}', editable={}",
+             game_title_id, game_path.toStdString(), is_vip);
     QDialog dialog{this};
     dialog.setWindowTitle(tr("金手指"));
     auto* layout = new QVBoxLayout{&dialog};
@@ -5745,6 +5782,9 @@ void GMainWindow::OnManageCheats() {
 }
 
 void GMainWindow::OpenPerGameConfiguration(u64 title_id, const QString& file_name) {
+    LOG_INFO(Frontend,
+             "[CheatServer] Opening game properties: title_id={:016X}, rom_path='{}', editable={}",
+             title_id, file_name.toStdString(), is_vip);
     Settings::SetConfiguringGlobal(false);
     ConfigurePerGame dialog(this, title_id, file_name, gl_renderer, physical_devices, system,
                             is_vip);

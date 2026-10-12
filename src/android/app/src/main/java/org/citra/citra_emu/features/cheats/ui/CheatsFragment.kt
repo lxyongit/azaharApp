@@ -7,6 +7,7 @@ package org.citra.citra_emu.features.cheats.ui
 import android.annotation.SuppressLint
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.citra.citra_emu.databinding.FragmentCheatsBinding
 import org.citra.citra_emu.features.cheats.model.Cheat
+import org.citra.citra_emu.features.cheats.model.CheatServer
 import org.citra.citra_emu.features.cheats.model.CheatsViewModel
 import org.citra.citra_emu.ui.TwoPaneOnBackPressedCallback
 import org.citra.citra_emu.ui.main.MainActivity
@@ -69,7 +71,12 @@ class CheatsFragment :
         homeViewModel.setNavigationVisibility(visible = false, animated = true)
         homeViewModel.setStatusBarShadeVisibility(visible = false)
 
-        cheatsViewModel.initialize(args.titleId)
+        Log.i(
+            CheatServer.LOG_TAG,
+            "[CheatServer] Opening cheats page: activity=${requireActivity().javaClass.simpleName}, " +
+                "title_id=${CheatServer.gameId(args.titleId)}, rom_path='${args.romPath}'"
+        )
+        cheatsViewModel.initialize(args.titleId, args.romPath)
 
         cheatListLastFocus = binding.cheatListContainer
         cheatDetailsLastFocus = binding.cheatDetailsContainer
@@ -136,9 +143,10 @@ class CheatsFragment :
         cheatsViewModel.saveIfNeeded()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
+    override fun onDestroyView() {
+        cheatsViewModel.cancelServerRequest()
         _binding = null
+        super.onDestroyView()
     }
 
     override fun onPanelSlide(panel: View, slideOffset: Float) {}

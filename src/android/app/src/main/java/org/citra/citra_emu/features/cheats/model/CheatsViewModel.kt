@@ -4,9 +4,15 @@
 
 package org.citra.citra_emu.features.cheats.model
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import org.citra.citra_emu.NativeLibrary
 
 class CheatsViewModel : ViewModel() {
     val selectedCheat get() = _selectedCheat.asStateFlow()
@@ -47,14 +53,104 @@ class CheatsViewModel : ViewModel() {
     val detailsViewFocusChange get() = _detailsViewFocusChange.asStateFlow()
     private val _detailsViewFocusChange = MutableStateFlow(false)
 
+    val cheatsReloadedEvent get() = _cheatsReloadedEvent.asStateFlow()
+    private val _cheatsReloadedEvent = MutableStateFlow(0L)
+
     private var titleId: Long = 0
+    private var romPath = ""
+    private var serverRequest: Job? = null
     lateinit var cheats: Array<Cheat>
     private var cheatsNeedSaving = false
     private var selectedCheatPosition = -1
 
-    fun initialize(titleId_: Long) {
+    fun initialize(titleId_: Long, romPath_: String) {
+        val sameGame = titleId == titleId_ && romPath == romPath_
+        if (!sameGame) {
+            cancelServerRequest()
+            saveIfNeeded()
+            setSelectedCheat(null, -1)
+        }
         titleId = titleId_
+        romPath = romPath_
+        Log.i(
+            CheatServer.LOG_TAG,
+            "[CheatServer] Initializing: title_id=${CheatServer.gameId(titleId)}, rom_path='$romPath'"
+        )
         load()
+        Log.i(CheatServer.LOG_TAG, "[CheatServer] Loaded ${cheats.size} local cheats")
+        if (sameGame && serverRequest?.isActive == true) {
+            Log.i(CheatServer.LOG_TAG, "[CheatServer] Request already pending; skipping duplicate")
+            return
+        }
+        if (titleId == 0L || titleId == -1L || romPath.removePrefix("!").isBlank()) {
+            Log.w(
+                CheatServer.LOG_TAG,
+                "[CheatServer] Skipping request: invalid_game_id=${titleId == 0L || titleId == -1L}, " +
+                    "missing_rom_path=${romPath.removePrefix("!").isBlank()}"
+            )
+            return
+        }
+        val requestedTitleId = titleId
+        val requestedRomPath = romPath
+        serverRequest = viewModelScope.launch {
+            try {
+                val fetched = CheatServer.fetch(requestedTitleId, requestedRomPath)
+                if (titleId != requestedTitleId ||
+                    (NativeLibrary.isRunning() && NativeLibrary.getRunningTitleId() != requestedTitleId)
+                ) {
+                    Log.w(CheatServer.LOG_TAG, "[CheatServer] Ignoring response after game changed")
+                    return@launch
+                }
+                importServerCheats(fetched)
+            } catch (e: CancellationException) {
+                Log.i(
+                    CheatServer.LOG_TAG,
+                    "[CheatServer] Request cancelled: title_id=${CheatServer.gameId(requestedTitleId)}"
+                )
+                throw e
+            } catch (e: Exception) {
+                Log.e(
+                    CheatServer.LOG_TAG,
+                    "[CheatServer] Request/import failed: title_id=${CheatServer.gameId(requestedTitleId)}",
+                    e
+                )
+            }
+        }
+    }
+
+    fun cancelServerRequest() {
+        if (serverRequest?.isActive == true) {
+            Log.i(CheatServer.LOG_TAG, "[CheatServer] Cancelling pending request on page/game change")
+        }
+        serverRequest?.cancel()
+        serverRequest = null
+    }
+
+    private fun importServerCheats(fetched: List<CheatServer.FetchedCheat>) {
+        val currentCheats = CheatEngine.getCheats()
+        val keys = currentCheats.map { it.getName().trim() to it.getCode().trim() }.toMutableSet()
+        var added = 0
+        var duplicates = 0
+        // Append missing entries so an in-progress edit and existing enabled states remain valid.
+        for (cheat in fetched) {
+            if (!keys.add(cheat.name.trim() to cheat.code.trim())) {
+                ++duplicates
+                continue
+            }
+            CheatEngine.addCheat(Cheat.createGatewayCode(cheat.name, CheatServer.ORIGIN, cheat.code))
+            ++added
+        }
+        if (added > 0) {
+            load()
+            cheatsNeedSaving = true
+            saveIfNeeded()
+            _cheatsReloadedEvent.value += 1
+        }
+        Log.i(
+            CheatServer.LOG_TAG,
+            "[CheatServer] Import complete: title_id=${CheatServer.gameId(titleId)}, " +
+                "previous=${currentCheats.size}, added=$added, duplicates=$duplicates, total=${cheats.size}"
+        )
     }
 
     private fun load() {
@@ -70,6 +166,10 @@ class CheatsViewModel : ViewModel() {
 
     fun saveIfNeeded() {
         if (cheatsNeedSaving) {
+            Log.i(
+                CheatServer.LOG_TAG,
+                "[CheatServer] Saving cheats: title_id=${CheatServer.gameId(titleId)}"
+            )
             CheatEngine.saveCheatFile(titleId)
             cheatsNeedSaving = false
         }

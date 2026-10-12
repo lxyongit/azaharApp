@@ -119,6 +119,7 @@ class EmulationFragment :
     private val args by navArgs<EmulationFragmentArgs>()
 
     private lateinit var game: Game
+    private var cheatRomPath = ""
     private lateinit var screenAdjustmentUtil: ScreenAdjustmentUtil
 
     private val emulationViewModel: EmulationViewModel by activityViewModels()
@@ -171,6 +172,8 @@ class EmulationFragment :
         } else {
             intentUri
         }
+        // Preserve the source URI before the emulator replaces it with an fd:// path.
+        cheatRomPath = intentUri?.toString().orEmpty()
         if (intentUri != null) {
             if (!BuildUtil.isGooglePlayBuild) {
                 val intentUriString = intentUri.toString()
@@ -220,6 +223,7 @@ class EmulationFragment :
         }
 
         Log.info("[EmulationFragment] Starting application " + game.path)
+        cheatRomPath = args.game?.path ?: cheatRomPath.ifBlank { game.path }
 
         // So this fragment doesn't restart on configuration changes; i.e. rotation.
         retainInstance = true
@@ -422,7 +426,10 @@ class EmulationFragment :
 
                 R.id.menu_cheats -> {
                     val action = EmulationNavigationDirections
-                        .actionGlobalCheatsActivity(NativeLibrary.getRunningTitleId())
+                        .actionGlobalCheatsActivity(
+                            titleId = NativeLibrary.getRunningTitleId(),
+                            romPath = cheatRomPath
+                        )
                     binding.root.findNavController().navigate(action)
                     true
                 }

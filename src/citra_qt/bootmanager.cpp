@@ -39,6 +39,7 @@
 #if defined(__APPLE__)
 #include <objc/message.h>
 #include <objc/objc.h>
+#include <objc/runtime.h>
 #elif !defined(WIN32)
 #include <qpa/qplatformnativeinterface.h>
 #endif
@@ -329,6 +330,9 @@ public:
             setAttribute(Qt::WA_DontCreateNativeAncestors);
         }
 #ifdef __APPLE__
+        // WA_NativeWindow may already have created a raster surface. Recreate it so
+        // Cocoa creates the backing layer for the requested Metal surface type.
+        windowHandle()->destroy();
         windowHandle()->setSurfaceType(QWindow::MetalSurface);
 #else
         windowHandle()->setSurfaceType(QWindow::VulkanSurface);
@@ -422,8 +426,25 @@ static Frontend::EmuWindow::WindowSystemInfo GetWindowSystemInfo(QWindow* window
         // Our Win32 Qt external doesn't have the private API.
         wsi.render_surface = reinterpret_cast<void*>(window->winId());
 #elif defined(__APPLE__)
-        wsi.render_surface = reinterpret_cast<void* (*)(id, SEL)>(objc_msgSend)(
+        id layer = reinterpret_cast<id (*)(id, SEL)>(objc_msgSend)(
             reinterpret_cast<id>(window->winId()), sel_registerName("layer"));
+        if (window->surfaceType() == QWindow::MetalSurface) {
+            // Qt 6.10 wraps the Metal content layer in a QContainerLayer. Older
+            // versions expose the CAMetalLayer directly through NSView::layer.
+            const SEL content_layer_selector = sel_registerName("contentLayer");
+            if (reinterpret_cast<BOOL (*)(id, SEL, SEL)>(objc_msgSend)(
+                    layer, sel_registerName("respondsToSelector:"), content_layer_selector)) {
+                layer = reinterpret_cast<id (*)(id, SEL)>(objc_msgSend)(
+                    layer, content_layer_selector);
+            }
+            if (!layer || !reinterpret_cast<BOOL (*)(id, SEL, Class)>(objc_msgSend)(
+                              layer, sel_registerName("isKindOfClass:"),
+                              objc_getClass("CAMetalLayer"))) {
+                LOG_CRITICAL(Frontend, "Qt did not provide a valid CAMetalLayer for Vulkan");
+                layer = nil;
+            }
+        }
+        wsi.render_surface = layer;
 #else
         QPlatformNativeInterface* pni = QGuiApplication::platformNativeInterface();
         wsi.display_connection = pni->nativeResourceForWindow("display", window);
@@ -692,6 +713,15 @@ bool GRenderWindow::InitRenderTarget() {
 
     // Update the Window System information with the new render target
     window_info = GetWindowSystemInfo(child_widget->windowHandle());
+
+#ifdef __APPLE__
+    if (child_widget->windowHandle()->surfaceType() == QWindow::MetalSurface &&
+        !window_info.render_surface) {
+        QMessageBox::critical(this, tr("Unable to initialize Vulkan"),
+                              tr("Could not obtain a Metal layer for the render window."));
+        return false;
+    }
+#endif
 
     child_widget->resize(Core::kScreenTopWidth, Core::kScreenTopHeight + Core::kScreenBottomHeight);
 
