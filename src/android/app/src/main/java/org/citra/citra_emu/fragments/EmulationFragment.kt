@@ -638,30 +638,29 @@ class EmulationFragment :
                 binding.loadingProgressText.visibility = View.GONE
                 prepareEmulation()
             }
-            Phase.PERMISSION_REQUIRED, Phase.FAILED -> {
+            Phase.FAILED -> {
+                progress.visibility = View.GONE
+                binding.loadingProgressText.visibility = View.GONE
+                automaticGpuDialog?.dismiss()
+                Toast.makeText(
+                    context, getString(R.string.automatic_gpu_failed, state.error.orEmpty()),
+                    Toast.LENGTH_LONG
+                ).show()
+                // Failure is terminal for this attempt, but must not block the game launch.
+                automaticGpuDriver.continueAfterFailure()
+            }
+            Phase.PERMISSION_REQUIRED -> {
                 progress.visibility = View.GONE
                 binding.loadingProgressText.visibility = View.GONE
                 binding.loadingText.setText(R.string.automatic_gpu_failed_title)
                 if (automaticGpuDialog?.isShowing == true) return
-                val needsPermission = state.phase == Phase.PERMISSION_REQUIRED
                 automaticGpuDialog = MaterialAlertDialogBuilder(requireContext())
                     .setTitle(R.string.automatic_gpu_failed_title)
-                    .setMessage(
-                        if (needsPermission) getString(R.string.automatic_gpu_permission)
-                        else getString(R.string.automatic_gpu_failed, state.error.orEmpty())
-                    )
+                    .setMessage(R.string.automatic_gpu_permission)
                     .setCancelable(false)
                     .setNegativeButton(android.R.string.cancel) { _, _ -> requireActivity().finish() }
-                    .setPositiveButton(
-                        if (needsPermission) R.string.automatic_gpu_grant_permission
-                        else R.string.automatic_gpu_retry
-                    ) { _, _ ->
-                        if (needsPermission) {
-                            requestGpuStoragePermission()
-                        } else {
-                            automaticGpuDriver.retry()
-                            prepareEmulation()
-                        }
+                    .setPositiveButton(R.string.automatic_gpu_grant_permission) { _, _ ->
+                        requestGpuStoragePermission()
                     }
                     .show()
             }

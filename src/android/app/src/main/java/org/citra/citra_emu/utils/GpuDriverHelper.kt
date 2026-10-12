@@ -115,11 +115,13 @@ object GpuDriverHelper {
         // Validate driver
         val metadata = getMetadataFromZip(copiedFile.inputStream())
         if (metadata.name == null) {
+            Log.error("GPU driver package has invalid metadata: $driverUri")
             copiedFile.delete()
             return null
         }
 
         if (metadata.minApi > Build.VERSION.SDK_INT) {
+            Log.error("GPU driver requires API ${metadata.minApi}, device API is ${Build.VERSION.SDK_INT}")
             copiedFile.delete()
             return null
         }
@@ -188,7 +190,10 @@ object GpuDriverHelper {
      */
     @Synchronized
     fun installCustomDriverComplete(driverUri: Uri): Boolean {
-        val copiedFile = copyDriverToExternalStorage(driverUri) ?: return false
+        val copiedFile = copyDriverToExternalStorage(driverUri) ?: run {
+            Log.error("GPU driver package could not be copied or validated: $driverUri")
+            return false
+        }
         val installed = installCustomDriverPartial(copiedFile.uri)
         if (!installed) copiedFile.delete()
         return installed
@@ -212,21 +217,26 @@ object GpuDriverHelper {
             driver.inputStream().use { input ->
                 packageFile.outputStream().use { input.copyTo(it) }
             }
-            if (!isCompleteDriverPackage(packageFile)) return false
+            if (!isCompleteDriverPackage(packageFile)) {
+                throw IOException("GPU driver ZIP is incomplete or has invalid metadata/library entries")
+            }
             extracted.mkdirs()
             FileUtil.unzipToInternalStorage(
                 BufferedInputStream(packageFile.inputStream()), extracted
             )
             val metadata = GpuDriverMetadata(File(extracted, META_JSON_FILENAME))
-            val libraryName = metadata.libraryName?.takeIf { it.isNotBlank() } ?: return false
+            val libraryName = metadata.libraryName?.takeIf { it.isNotBlank() }
+                ?: throw IOException("GPU driver metadata is missing libraryName")
             val library = File(extracted, libraryName)
             if (metadata.name.isNullOrBlank() || metadata.minApi > Build.VERSION.SDK_INT ||
                 !library.canonicalPath.startsWith(extracted.canonicalPath + File.separator) ||
                 !library.isFile || library.length() == 0L
-            ) return false
+            ) throw IOException("GPU driver metadata, library path, or Android API requirement is invalid")
 
             // Select only a fully extracted package, keeping the previous selection on failure.
-            if (!installed.renameTo(backup)) return false
+            if (!installed.renameTo(backup)) {
+                throw IOException("Could not back up the current GPU driver before installation")
+            }
             replaced = true
             if (!extracted.renameTo(installed)) throw IOException("Could not select GPU driver")
             if (!initializeDriverParameters()) {

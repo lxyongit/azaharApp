@@ -50,8 +50,10 @@ class AutomaticGpuDriverViewModel : ViewModel() {
         }
     }
 
-    fun retry() {
-        if (job?.isActive == true) return
-        mutableState.value = State()
+    fun continueAfterFailure() {
+        if (state.value.phase != Phase.FAILED) return
+        // Permit this launch with the existing/system driver. Do not persist completion;
+        // a later game launch may retry automatic configuration.
+        mutableState.value = State(Phase.READY)
     }
 }

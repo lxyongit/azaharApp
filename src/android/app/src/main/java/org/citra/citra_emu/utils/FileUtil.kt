@@ -594,11 +594,30 @@ object FileUtil {
 
     fun copyToExternalStorage(sourceFile: Uri, destinationDir: DocumentFile): DocumentFile? {
         val filename = getFilename(sourceFile)
-        val destinationFile = destinationDir.createFile("application/zip", filename)!!
-        destinationFile.outputStream().use { os ->
-            sourceFile.inputStream().use { it.copyTo(os) }
+        if (filename.isBlank()) return null
+        val localDirectory = getLocalFile(destinationDir.uri)
+        val destinationFile = if (localDirectory != null) {
+            val target = File(localDirectory, filename)
+            // RawDocumentFile.createFile appends the MIME extension, even to a .zip name.
+            // Use the exact filename and never truncate a source already in driver storage.
+            if (getLocalFile(sourceFile)?.canonicalFile == target.canonicalFile) {
+                return DocumentFile.fromFile(target)
+            }
+            DocumentFile.fromFile(target)
+        } else {
+            destinationDir.findFile(filename)
+                ?: destinationDir.createFile("application/zip", filename)
+                ?: return null
         }
-        return destinationDir.findFile(filename)
+        if (destinationFile.uri == sourceFile) return destinationFile
+
+        sourceFile.inputStream().use { input ->
+            val output = context.contentResolver.openOutputStream(destinationFile.uri, "wt")
+                ?: throw IOException("Could not open driver package destination")
+            output.use { input.copyTo(it) }
+        }
+        // SAF providers may adjust a display name. Return the file we actually wrote.
+        return destinationFile
     }
 
     fun isRootTreeUri(uri: Uri): Boolean {

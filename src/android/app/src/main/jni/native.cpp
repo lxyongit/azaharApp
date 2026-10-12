@@ -406,9 +406,15 @@ bool InitializeGpuDriver(const std::string& hook_lib_dir, const std::string& cus
 
     // Try to load a custom driver.
     if (custom_driver_name.size()) {
+        dlerror(); // Clear earlier linker errors before attempting this driver.
         handle = adrenotools_open_libvulkan(
             RTLD_NOW, featureFlags | ADRENOTOOLS_DRIVER_CUSTOM, nullptr, hook_lib_dir.c_str(),
             custom_driver_dir.c_str(), custom_driver_name.c_str(), file_redirect_dir_, nullptr);
+        if (!handle) {
+            const char* error = dlerror();
+            LOG_ERROR(Frontend, "Failed to load GPU driver {}{}: {}", custom_driver_dir,
+                      custom_driver_name, error ? error : "No linker diagnostic available");
+        }
     }
 
     const bool custom_driver_loaded = handle != nullptr;
