@@ -173,6 +173,20 @@ jobs:
       - name: Install extra tools (MSVC)
         if: ${{ matrix.target == 'msvc' }}
         run: choco install ccache ninja ptime wget
+      - name: Install FFmpeg development libraries (MSVC)
+        if: ${{ matrix.target == 'msvc' }}
+        shell: pwsh
+        run: |
+          # The video dumping backend requires FFmpeg 7.x (libavutil 59).
+          $ffmpegVersion = "7.1.1"
+          $ffmpegName = "ffmpeg-$ffmpegVersion-full_build-shared"
+          $ffmpegArchive = Join-Path $env:RUNNER_TEMP "$ffmpegName.zip"
+          $ffmpegUrl = "https://github.com/GyanD/codexffmpeg/releases/download/$ffmpegVersion/$ffmpegName.zip"
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegArchive
+          Expand-Archive -Path $ffmpegArchive -DestinationPath $env:RUNNER_TEMP -Force
+          $ffmpegRoot = (Join-Path $env:RUNNER_TEMP $ffmpegName).Replace('\', '/')
+          "FFMPEG_ROOT=$ffmpegRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$ffmpegRoot/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install vulkan-sdk (MSVC)
         if: ${{ matrix.target == 'msvc' }}
         run: |
