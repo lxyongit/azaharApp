@@ -4,6 +4,7 @@
 
 package org.citra.citra_emu.fragments
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.AlertDialog
@@ -39,6 +40,7 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.Toast.LENGTH_LONG
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.ViewCompat
@@ -83,6 +85,8 @@ import org.citra.citra_emu.utils.AmiiboDatabase.Companion.amiibos
 import org.citra.citra_emu.utils.AmiiboDatabase.Companion.amiibos_series
 import org.citra.citra_emu.utils.AmiiboUsageDatabase
 import org.citra.citra_emu.utils.AmiiboUsageDatabase.Companion.amiibos_usages
+import org.citra.citra_emu.utils.AutomaticGpuDriver
+import org.citra.citra_emu.utils.AutomaticGpuDriver.Phase
 import org.citra.citra_emu.utils.BuildUtil
 import org.citra.citra_emu.utils.DirectoryInitialization
 import org.citra.citra_emu.utils.DirectoryInitialization.DirectoryInitializationState
@@ -91,7 +95,9 @@ import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.GameHelper
 import org.citra.citra_emu.utils.GameIconUtils
 import org.citra.citra_emu.utils.Log
+import org.citra.citra_emu.utils.PermissionsHandler
 import org.citra.citra_emu.utils.ViewUtils
+import org.citra.citra_emu.viewmodel.AutomaticGpuDriverViewModel
 import org.citra.citra_emu.viewmodel.EmulationViewModel
 
 class EmulationFragment :
@@ -117,7 +123,18 @@ class EmulationFragment :
 
     private val emulationViewModel: EmulationViewModel by activityViewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
+    private val automaticGpuDriver: AutomaticGpuDriverViewModel by viewModels()
+    private var automaticGpuDialog: androidx.appcompat.app.AlertDialog? = null
     private val settings get() = settingsViewModel.settings
+
+    private val gpuStorageSettings =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (isResumed) prepareEmulation()
+        }
+    private val gpuStoragePermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            if (isResumed) prepareEmulation()
+        }
 
     private val onPause = Runnable { togglePause() }
     private val onShutdown = Runnable { emulationState.stop() }
@@ -450,6 +467,9 @@ class EmulationFragment :
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
                     if (!emulationViewModel.emulationStarted.value) {
+                        if (automaticGpuDriver.state.value.phase != Phase.READY) {
+                            requireActivity().finish()
+                        }
                         return
                     }
 
@@ -522,6 +542,11 @@ class EmulationFragment :
                     }
                 }
             }
+            launch {
+                repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                    automaticGpuDriver.state.collectLatest { showAutomaticGpuState(it) }
+                }
+            }
         }
 
         setInsets()
@@ -541,7 +566,7 @@ class EmulationFragment :
         super.onResume()
         Choreographer.getInstance().postFrameCallback(this)
         if (NativeLibrary.isRunning()) {
-            emulationState.unpause()
+            emulationState.run(isActivityRecreated = true)
 
             // If the overlay is enabled, we need to update the position if changed
             val position = IntSetting.PERFORMANCE_OVERLAY_POSITION.int
@@ -558,14 +583,117 @@ class EmulationFragment :
             return
         }
 
+        prepareEmulation()
+    }
+
+    private fun prepareEmulation() {
+        if (!::emulationState.isInitialized || requireActivity().isFinishing) return
+        if (!PermissionsHandler.hasWriteAccess(requireContext())) {
+            Toast.makeText(context, R.string.write_permission_needed, Toast.LENGTH_LONG).show()
+            return
+        }
         if (DirectoryInitialization.areCitraDirectoriesReady()) {
-            emulationState.run(emulationActivity.isActivityRecreated)
+            configureDriverThenStartEmulation()
         } else {
             setupCitraDirectoriesThenStartEmulation()
         }
     }
 
+    private fun configureDriverThenStartEmulation() {
+        automaticGpuDriver.startAfterPrerequisites()
+        if (automaticGpuDriver.state.value.phase == Phase.READY && isResumed &&
+            !requireActivity().isFinishing && !emulationState.isRunning
+        ) {
+            emulationState.run(emulationActivity.isActivityRecreated)
+        }
+    }
+
+    private fun showAutomaticGpuState(state: AutomaticGpuDriver.State) {
+        if (requireActivity().isFinishing) return
+        val progress = binding.loadingProgressIndicator
+        when (state.phase) {
+            Phase.IDLE -> Unit
+            Phase.CHECKING, Phase.DOWNLOADING, Phase.INSTALLING -> {
+                binding.loadingText.setText(
+                    when (state.phase) {
+                        Phase.DOWNLOADING -> R.string.automatic_gpu_downloading
+                        Phase.INSTALLING -> R.string.automatic_gpu_installing
+                        else -> R.string.automatic_gpu_checking
+                    }
+                )
+                progress.visibility = View.VISIBLE
+                progress.max = 100
+                progress.isIndeterminate = state.percent == null
+                state.percent?.let { progress.progress = it }
+                binding.loadingProgressText.visibility =
+                    if (state.percent == null) View.GONE else View.VISIBLE
+                binding.loadingProgressText.text = state.percent?.let { "$it%" }.orEmpty()
+            }
+            Phase.READY -> {
+                if (NativeLibrary.isRunning() || emulationState.isRunning) return
+                automaticGpuDialog?.dismiss()
+                binding.loadingText.setText(R.string.loading)
+                progress.visibility = View.VISIBLE
+                progress.isIndeterminate = true
+                binding.loadingProgressText.visibility = View.GONE
+                prepareEmulation()
+            }
+            Phase.PERMISSION_REQUIRED, Phase.FAILED -> {
+                progress.visibility = View.GONE
+                binding.loadingProgressText.visibility = View.GONE
+                binding.loadingText.setText(R.string.automatic_gpu_failed_title)
+                if (automaticGpuDialog?.isShowing == true) return
+                val needsPermission = state.phase == Phase.PERMISSION_REQUIRED
+                automaticGpuDialog = MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.automatic_gpu_failed_title)
+                    .setMessage(
+                        if (needsPermission) getString(R.string.automatic_gpu_permission)
+                        else getString(R.string.automatic_gpu_failed, state.error.orEmpty())
+                    )
+                    .setCancelable(false)
+                    .setNegativeButton(android.R.string.cancel) { _, _ -> requireActivity().finish() }
+                    .setPositiveButton(
+                        if (needsPermission) R.string.automatic_gpu_grant_permission
+                        else R.string.automatic_gpu_retry
+                    ) { _, _ ->
+                        if (needsPermission) {
+                            requestGpuStoragePermission()
+                        } else {
+                            automaticGpuDriver.retry()
+                            prepareEmulation()
+                        }
+                    }
+                    .show()
+            }
+        }
+    }
+
+    private fun requestGpuStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val permissionIntent = Intent(
+                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.fromParts("package", requireContext().packageName, null)
+            )
+            try {
+                gpuStorageSettings.launch(permissionIntent)
+            } catch (_: android.content.ActivityNotFoundException) {
+                try {
+                    gpuStorageSettings.launch(
+                        Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    )
+                } catch (_: android.content.ActivityNotFoundException) {
+                    Toast.makeText(context, R.string.automatic_gpu_permission, Toast.LENGTH_LONG)
+                        .show()
+                    requireActivity().finish()
+                }
+            }
+        } else {
+            gpuStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+
     override fun onPause() {
+        if (::emulationState.isInitialized) emulationState.deferSurfaceStart()
         if (NativeLibrary.isRunning()) {
             emulationState.pause()
         }
@@ -576,6 +704,12 @@ class EmulationFragment :
     override fun onDetach() {
         NativeLibrary.clearEmulationActivity()
         super.onDetach()
+    }
+
+    override fun onDestroyView() {
+        automaticGpuDialog?.dismiss()
+        automaticGpuDialog = null
+        super.onDestroyView()
     }
 
     override fun onDestroy() {
@@ -596,7 +730,7 @@ class EmulationFragment :
         if (directoryInitializationState ===
             DirectoryInitializationState.CITRA_DIRECTORIES_INITIALIZED
         ) {
-            emulationState.run(emulationActivity.isActivityRecreated)
+            configureDriverThenStartEmulation()
         } else if (directoryInitializationState ===
             DirectoryInitializationState.EXTERNAL_STORAGE_PERMISSION_NEEDED
         ) {
@@ -1741,6 +1875,8 @@ class EmulationFragment :
     private class EmulationState(private val gamePath: String) {
         private var state: State
         private var surface: Surface? = null
+        private var surfaceStartAllowed = false
+        private var startupApproved = false
 
         init {
             // Starting state is stopped.
@@ -1774,6 +1910,7 @@ class EmulationFragment :
         // State changing methods
         @Synchronized
         fun pause() {
+            if (!startupApproved) return
             if (state != State.PAUSED) {
                 state = State.PAUSED
                 Log.debug("[EmulationFragment] Pausing emulation.")
@@ -1787,6 +1924,8 @@ class EmulationFragment :
 
         @Synchronized
         fun unpause() {
+            if (!startupApproved) return
+            surfaceStartAllowed = true
             if (state != State.RUNNING) {
                 state = State.RUNNING
                 Log.debug("[EmulationFragment] Unpausing emulation.")
@@ -1800,6 +1939,8 @@ class EmulationFragment :
 
         @Synchronized
         fun run(isActivityRecreated: Boolean) {
+            startupApproved = true
+            surfaceStartAllowed = true
             if (isActivityRecreated) {
                 if (NativeLibrary.isRunning()) {
                     state = State.PAUSED
@@ -1816,9 +1957,14 @@ class EmulationFragment :
 
         // Surface callbacks
         @Synchronized
+        fun deferSurfaceStart() {
+            surfaceStartAllowed = false
+        }
+
+        @Synchronized
         fun newSurface(surface: Surface?) {
             this.surface = surface
-            if (this.surface != null) {
+            if (this.surface != null && surfaceStartAllowed) {
                 runWithValidSurface()
             }
         }

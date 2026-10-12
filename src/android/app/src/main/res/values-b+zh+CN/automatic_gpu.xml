@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="automatic_gpu_checking">正在检查 GPU 驱动配置…</string>
+    <string name="automatic_gpu_downloading">正在下载 GPU 驱动…</string>
+    <string name="automatic_gpu_installing">正在安装并选择 GPU 驱动…</string>
+    <string name="automatic_gpu_failed_title">GPU 驱动配置未完成</string>
+    <string name="automatic_gpu_failed">GPU 驱动配置失败，游戏尚未启动。\n\n%1$s</string>
+    <string name="automatic_gpu_permission">读取或下载 GPU 驱动需要“所有文件访问权限”。请授权后继续游戏启动准备。</string>
+    <string name="automatic_gpu_grant_permission">前往授权</string>
+    <string name="automatic_gpu_retry">重试</string>
+</resources>

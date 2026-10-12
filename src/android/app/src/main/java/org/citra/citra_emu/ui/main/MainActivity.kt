@@ -33,6 +33,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.withResumed
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
@@ -47,7 +48,9 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.navigation.NavigationBarView
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.citra.citra_emu.BuildConfig
 import org.citra.citra_emu.NativeLibrary
 import org.citra.citra_emu.R
@@ -225,7 +228,14 @@ class MainActivity :
             }
             launch {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
-                    homeViewModel.isPickingUserDir.collect { checkUserPermissions() }
+                    homeViewModel.isPickingUserDir.collect { isPicking ->
+                        checkUserPermissions()
+                        if (!isPicking) {
+                            maybeLaunchPendingExternalGame()
+                            maybeOpenPendingSettings()
+                            maybeOpenPendingGpuDriverManager()
+                        }
+                    }
                 }
             }
         }
@@ -364,16 +374,28 @@ class MainActivity :
         }
 
         val sourceIntent = intent
-        val gameUri = sourceIntent?.data ?: return
-        if (sourceIntent.action != Intent.ACTION_VIEW) {
+        if (sourceIntent == null ||
+            (sourceIntent.action != Intent.ACTION_VIEW && !sourceIntent.hasExtra("game") &&
+                !sourceIntent.hasExtra("SelectedGame"))
+        ) {
             return
         }
+        if (sourceIntent.data == null && !sourceIntent.hasExtra("game") &&
+            !sourceIntent.hasExtra("SelectedGame")
+        ) return
 
         val firstTimeSetup = PreferenceManager.getDefaultSharedPreferences(applicationContext)
             .getBoolean(Settings.PREF_FIRST_APP_LAUNCH, true)
-        if (firstTimeSetup || CitraDirectoryUtils.needToUpdateManually()) {
+        if (firstTimeSetup || homeViewModel.isPickingUserDir.value ||
+            CitraDirectoryUtils.needToUpdateManually()
+        ) {
             return
         }
+
+        // SAF access to the user directory does not grant access to shared native paths.
+        if (!BuildUtil.isGooglePlayBuild &&
+            !PermissionsHandler.hasNativeFilesystemAccess(applicationContext)
+        ) return
 
         if (PermissionsHandler.hasWriteAccess(applicationContext) &&
             !DirectoryInitialization.areCitraDirectoriesReady()
@@ -387,20 +409,17 @@ class MainActivity :
             return
         }
 
-        if (isInstallableArchive(gameUri)) {
+        val gameUri = sourceIntent.data
+        if (gameUri != null && isInstallableArchive(gameUri)) {
             maybeInstallAndLaunchPendingArchive(gameUri, sourceIntent)
             return
         }
 
-        val launchIntent = Intent(this, EmulationActivity::class.java).apply {
-            action = Intent.ACTION_VIEW
-            data = gameUri
-            clipData =
-                sourceIntent.clipData ?: ClipData.newUri(contentResolver, "azahar-game", gameUri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            if (sourceIntent.getBooleanExtra("launched_from_shortcut", false)) {
-                putExtra("launched_from_shortcut", true)
+        val launchIntent = Intent(sourceIntent).setClass(this, EmulationActivity::class.java).apply {
+            if (clipData == null && gameUri != null) {
+                clipData = ClipData.newUri(contentResolver, "azahar-game", gameUri)
             }
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
         hasForwardedPendingExternalGame = true
@@ -528,10 +547,9 @@ class MainActivity :
 
     private fun launchInstalledGame(game: Game, sourceIntent: Intent) {
         val launchIntent = runCatching {
-            game.launchIntent.apply {
-                if (sourceIntent.getBooleanExtra("launched_from_shortcut", false)) {
-                    putExtra("launched_from_shortcut", true)
-                }
+            Intent(sourceIntent).setClass(this, EmulationActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                setDataAndType(game.launchIntent.data, sourceIntent.type)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
         }.getOrElse {
@@ -663,36 +681,36 @@ class MainActivity :
                 ?.takeIf { it.isNotBlank() }
                 ?.let { Uri.fromFile(File(it)) }
 
-        if (driverUri != null && GpuDriverHelper.supportsCustomDriverLoading()) {
-            val installed = runCatching {
-                GpuDriverHelper.installCustomDriverComplete(driverUri)
-            }.getOrElse {
-                Toast.makeText(
-                    this,
-                    getString(R.string.select_gpu_driver_error),
-                    Toast.LENGTH_LONG
-                ).show()
-                false
-            }
-
-            if (!installed) {
-                Toast.makeText(
-                    this,
-                    getString(R.string.select_gpu_driver_error),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-
-        val navHostFragment =
-            supportFragmentManager.findFragmentById(R.id.fragment_container) as? NavHostFragment
-                ?: return
-        val navController = navHostFragment.navController
-        if (navController.currentDestination?.id != R.id.driverManagerFragment) {
-            navController.navigate(R.id.driverManagerFragment)
-        }
-
+        // Set before suspending so onResume cannot install the same request twice.
         hasHandledPendingGpuDriverManager = true
+        lifecycleScope.launch {
+            if (driverUri != null && GpuDriverHelper.supportsCustomDriverLoading()) {
+                val installed = withContext(Dispatchers.IO) {
+                    runCatching {
+                        if (driverUri.scheme == "file" || driverUri.scheme == null) {
+                            GpuDriverHelper.setGpuDriver(driverUri.path.orEmpty())
+                        } else {
+                            GpuDriverHelper.installCustomDriverComplete(driverUri)
+                        }
+                    }.getOrDefault(false)
+                }
+                if (!installed) {
+                    Toast.makeText(
+                        this@MainActivity, R.string.select_gpu_driver_error, Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
+            lifecycle.withResumed {
+                if (isFinishing || intent !== sourceIntent) return@withResumed
+                val navHostFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+                    as? NavHostFragment ?: return@withResumed
+                val navController = navHostFragment.navController
+                if (navController.currentDestination?.id != R.id.driverManagerFragment) {
+                    navController.navigate(R.id.driverManagerFragment)
+                }
+            }
+        }
     }
 
     private fun maybeOpenPendingSettings() {

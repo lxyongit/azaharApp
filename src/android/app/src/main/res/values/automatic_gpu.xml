@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="automatic_gpu_checking">Checking GPU driver configuration…</string>
+    <string name="automatic_gpu_downloading">Downloading GPU driver…</string>
+    <string name="automatic_gpu_installing">Installing and selecting GPU driver…</string>
+    <string name="automatic_gpu_failed_title">GPU driver setup incomplete</string>
+    <string name="automatic_gpu_failed">The game has not started because GPU driver setup failed.\n\n%1$s</string>
+    <string name="automatic_gpu_permission">All files access is required to read or download the GPU driver. Grant access to continue game setup.</string>
+    <string name="automatic_gpu_grant_permission">Grant access</string>
+    <string name="automatic_gpu_retry">Retry</string>
+</resources>

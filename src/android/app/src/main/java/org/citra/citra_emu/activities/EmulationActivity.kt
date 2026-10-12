@@ -43,6 +43,7 @@ import org.citra.citra_emu.display.SecondaryDisplay
 import org.citra.citra_emu.features.hotkeys.HotkeyUtility
 import org.citra.citra_emu.features.settings.model.BooleanSetting
 import org.citra.citra_emu.features.settings.model.IntSetting
+import org.citra.citra_emu.features.settings.model.Settings
 import org.citra.citra_emu.features.settings.model.SettingsViewModel
 import org.citra.citra_emu.features.settings.model.view.InputBindingSetting
 import org.citra.citra_emu.fragments.EmulationFragment
@@ -97,10 +98,14 @@ class EmulationActivity : AppCompatActivity() {
     private var isEmulationReady: Boolean = false
 
     private fun ensureUserDirectoryReady(): Boolean {
-        if (DirectoryInitialization.areCitraDirectoriesReady()) return true
+        if (preferences.getBoolean(Settings.PREF_FIRST_APP_LAUNCH, true)) return false
+        if (!BuildUtil.isGooglePlayBuild &&
+            !PermissionsHandler.hasNativeFilesystemAccess(applicationContext)
+        ) return false
         CitraDirectoryUtils.attemptAutomaticUpdateDirectory() // Lime3DS -> Azahar
         if (CitraDirectoryUtils.needToUpdateManually()) return false
         if (!PermissionsHandler.hasWriteAccess(applicationContext)) return false
+        if (DirectoryInitialization.areCitraDirectoriesReady()) return true
         return DirectoryInitialization.start() ==
             DirectoryInitialization.DirectoryInitializationState.CITRA_DIRECTORIES_INITIALIZED
     }
@@ -116,7 +121,7 @@ class EmulationActivity : AppCompatActivity() {
             super.onCreate(null) // null: don't restore fragments into an activity we're killing
             secondaryDisplayManager = SecondaryDisplay(this)
             startActivity(
-                Intent(this, MainActivity::class.java).apply {
+                Intent(intent).setClass(this, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             )

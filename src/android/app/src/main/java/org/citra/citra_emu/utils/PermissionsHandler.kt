@@ -81,7 +81,7 @@ object PermissionsHandler {
         }
     }
 
-    private fun hasNativeFilesystemAccess(context: Context): Boolean {
+    fun hasNativeFilesystemAccess(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
