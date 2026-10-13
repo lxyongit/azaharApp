@@ -142,7 +142,8 @@ jobs:
           path: artifacts/
 
   windows:
-    runs-on: windows-latest
+    # Keep the MSVC build on VS 2022, matching the bundled Qt msvc2022 binaries.
+    runs-on: ${{ (matrix.target == 'msvc' && 'windows-2022') || 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -170,6 +171,8 @@ jobs:
       - name: Set up MSVC
         if: ${{ matrix.target == 'msvc' }}
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          vsversion: '2022'
       - name: Install extra tools (MSVC)
         if: ${{ matrix.target == 'msvc' }}
         run: choco install ccache ninja ptime wget
@@ -193,7 +196,7 @@ jobs:
         if: ${{ matrix.target == 'msvc' }}
         shell: pwsh
         run: |
-          # The video dumping backend requires FFmpeg 7.x (libavutil 59).
+          # Use a fixed FFmpeg development package for the MSVC build.
           $ffmpegVersion = "7.1.1"
           $ffmpegName = "ffmpeg-$ffmpegVersion-full_build-shared"
           $ffmpegArchive = Join-Path $env:RUNNER_TEMP "$ffmpegName.zip"
@@ -231,6 +234,24 @@ jobs:
         shell: pwsh
       - name: Disable line ending translation
         run: git config --global core.autocrlf input
+      - name: Report toolchain versions (MSVC)
+        if: ${{ matrix.target == 'msvc' }}
+        shell: pwsh
+        run: |
+          "Runner image: $env:ImageOS $env:ImageVersion"
+          "MSVC toolset: $env:VCToolsVersion"
+          "FFmpeg root: $env:FFMPEG_ROOT"
+          "ZLIB root: $env:ZLIB_ROOT"
+          cmake --version
+          ninja --version
+          ffmpeg -version
+      - name: Report toolchain versions (MSYS2)
+        if: ${{ matrix.target == 'msys2' }}
+        run: |
+          c++ --version
+          cmake --version
+          ninja --version
+          pacman -Q mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-libc++ mingw-w64-clang-x86_64-ffmpeg mingw-w64-clang-x86_64-qt6-base
       - name: Build
         run: ./.ci/windows.sh
       - name: Generate installer

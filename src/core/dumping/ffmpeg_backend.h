@@ -88,7 +88,7 @@ public:
     void ProcessFrame(VideoFrame& frame);
 
 private:
-    bool InitHWContext(const AVCodec* codec);
+    bool InitHWContext(const AVCodec* codec, const AVPixelFormat* pixel_formats);
     bool InitFilters();
 
     u64 frame_count{};

@@ -8,8 +8,11 @@ else()
 endif()
 
 function(target_disable_warnings target)
-    if (MSVC)
-        target_compile_options(${target} INTERFACE /W0)
+    if (WIN32)
+        # Suppress diagnostics in dependency headers without disabling warnings
+        # in every source file that links to the dependency.
+        set_property(TARGET ${target} APPEND PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+            "$<TARGET_PROPERTY:${target},INTERFACE_INCLUDE_DIRECTORIES>")
     else()
         target_compile_options(${target} INTERFACE -w)
     endif()

@@ -2,8 +2,12 @@
 // Licensed under GPLv2 or any later version
 // Refer to the misc/licenses/gplv2.txt file included.
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
+#include <cstdlib>
+#include <string>
 #include <boost/crc.hpp>
 #include <cryptopp/osrng.h>
 
@@ -53,11 +57,12 @@ NfcDevice::NfcDevice(Core::System& system_) : system{system_} {
 NfcDevice::~NfcDevice() = default;
 
 static std::array<u8, 8> hexToBin(const std::string& hex) {
-    std::array<u8, 8> bytes;
+    std::array<u8, 8> bytes{};
 
-    for (unsigned int i = 0; i < hex.length(); i += 2) {
+    const auto hex_length = std::min(hex.size(), bytes.size() * 2);
+    for (std::size_t i = 0; i < hex_length; i += 2) {
         std::string byteString = hex.substr(i, 2);
-        bytes[i/2] = static_cast<u8>(std::strtol(byteString.c_str(), nullptr, 16));
+        bytes[i / 2] = static_cast<u8>(std::strtol(byteString.c_str(), nullptr, 16));
     }
 	
     return bytes;
@@ -103,8 +108,10 @@ static EncryptedNTAG215File getAmiibo(std::string id, std::string name = "+Amiib
     genFile.user_memory.settings.init_date.SetMonth(static_cast<u8>(11));
     genFile.user_memory.settings.init_date.SetDay(static_cast<u8>(5));
 	
-	auto amiibo_name = Common::UTF8ToUTF16(name);
-	for (int i = 0; i < amiibo_name.length(); i++) {
+    const auto amiibo_name = Common::UTF8ToUTF16(name);
+    const auto name_length =
+        std::min(amiibo_name.size(), genFile.user_memory.settings.amiibo_name.size());
+    for (std::size_t i = 0; i < name_length; ++i) {
         genFile.user_memory.settings.amiibo_name[i] = static_cast<u16_be>(amiibo_name[i]);
     }
 	

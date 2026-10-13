@@ -48,7 +48,7 @@ if (NOT FFmpeg_FIND_COMPONENTS)
 endif ()
 
 list(LENGTH FFmpeg_FIND_COMPONENTS _numComponents)
-if ((${_numComponents} GREATER 1) AND DEFINED ${FFmpeg_FIND_VERSION})
+if ((${_numComponents} GREATER 1) AND DEFINED FFmpeg_FIND_VERSION)
   message(WARNING "Using a required version in combination with multiple COMPONENTS is not supported")
   set(_FFmpeg_REQUIRED_VERSION 0)
 elseif (DEFINED FFmpeg_FIND_VERSION)
@@ -163,12 +163,12 @@ foreach (_component ${FFmpeg_FIND_COMPONENTS})
       if (NOT ${_component}_VERSION)
         message(WARNING "${_component}: Unable to check component version, using anyway...")
       elseif (
-        (NOT (_component_version_major EQUAL _FFmpeg_REQUIRED_VERSION)) AND
+        (_component_version_major LESS _FFmpeg_REQUIRED_VERSION) AND
         (NOT (_FFmpeg_REQUIRED_VERSION EQUAL 0))
       )
           message(FATAL_ERROR
-            "${_component}: ${${_component}_VERSION} != ${_FFmpeg_REQUIRED_VERSION}\n"
-            "${_component} version ${_FFmpeg_REQUIRED_VERSION}.x *exactly* is required.\n"
+            "${_component}: ${${_component}_VERSION} < ${_FFmpeg_REQUIRED_VERSION}\n"
+            "${_component} version ${_FFmpeg_REQUIRED_VERSION}.x or newer is required.\n"
             "Check your FFmpeg version, and be sure to clean the build directory before retrying.\n"
             "If building with FFmpeg is impractical, you can disable it by setting ENABLE_FFMPEG to OFF.")
       endif ()

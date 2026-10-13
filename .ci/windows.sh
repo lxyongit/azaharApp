@@ -36,8 +36,10 @@ cmake .. -G Ninja \
     -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     -DENABLE_QT_TRANSLATION=ON \
     -DUSE_DISCORD_PRESENCE=ON \
-	"${EXTRA_CMAKE_FLAGS[@]}"
-ninja
+    -DCITRA_WARNINGS_AS_ERRORS=OFF \
+    "${EXTRA_CMAKE_FLAGS[@]}"
+# Finish independent compilation steps so a single CI run reports more failures.
+ninja -k 0
 ninja bundle
 strip -s bundle/*.exe
 

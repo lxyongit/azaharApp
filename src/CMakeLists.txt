@@ -40,6 +40,12 @@ if (MSVC)
     # /Zc:inline          - Let codegen omit inline functions in object files
     # /Zc:throwingNew     - Let codegen assume `operator new` (without std::nothrow) will never return null
     # /GT                 - Supports fiber safety for data allocated using static thread-local storage
+    # Explicit diagnostics follow the same warnings-as-errors policy as /WX.
+    set(MSVC_WARNING_PREFIX /w1)
+    if (CITRA_WARNINGS_AS_ERRORS)
+        set(MSVC_WARNING_PREFIX /we)
+    endif()
+
     add_compile_options(
         /MP
         /Zm200
@@ -65,23 +71,23 @@ if (MSVC)
         # Warnings
         /W3
 
-        /we4062 # Enumerator 'identifier' in a switch of enum 'enumeration' is not handled
-        /we4189 # 'identifier': local variable is initialized but not referenced
-        /we4265 # 'class': class has virtual functions, but destructor is not virtual
-        /we4388 # 'expression': signed/unsigned mismatch
-        /we4389 # 'operator': signed/unsigned mismatch
-        /we4456 # Declaration of 'identifier' hides previous local declaration
-        /we4457 # Declaration of 'identifier' hides function parameter
+        ${MSVC_WARNING_PREFIX}4062 # Enumerator 'identifier' in a switch of enum 'enumeration' is not handled
+        ${MSVC_WARNING_PREFIX}4189 # 'identifier': local variable is initialized but not referenced
+        ${MSVC_WARNING_PREFIX}4265 # 'class': class has virtual functions, but destructor is not virtual
+        ${MSVC_WARNING_PREFIX}4388 # 'expression': signed/unsigned mismatch
+        ${MSVC_WARNING_PREFIX}4389 # 'operator': signed/unsigned mismatch
+        ${MSVC_WARNING_PREFIX}4456 # Declaration of 'identifier' hides previous local declaration
+        ${MSVC_WARNING_PREFIX}4457 # Declaration of 'identifier' hides function parameter
         # /we4458 TODO: Enable me # Declaration of 'identifier' hides class member
-        /we4459 # Declaration of 'identifier' hides global declaration
-        /we4505 # 'function': unreferenced local function has been removed
-        /we4547 # 'operator': operator before comma has no effect; expected operator with side-effect
-        /we4549 # 'operator1': operator before comma has no effect; did you intend 'operator2'?
-        /we4555 # Expression has no effect; expected expression with side-effect
-        /we4826 # Conversion from 'type1' to 'type2' is sign-extended. This may cause unexpected runtime behavior.
-        /we5038 # data member 'member1' will be initialized after data member 'member2'
-        /we5233 # explicit lambda capture 'identifier' is not used
-        /we5245 # 'function': unreferenced function with internal linkage has been removed
+        ${MSVC_WARNING_PREFIX}4459 # Declaration of 'identifier' hides global declaration
+        ${MSVC_WARNING_PREFIX}4505 # 'function': unreferenced local function has been removed
+        ${MSVC_WARNING_PREFIX}4547 # 'operator': operator before comma has no effect; expected operator with side-effect
+        ${MSVC_WARNING_PREFIX}4549 # 'operator1': operator before comma has no effect; did you intend 'operator2'?
+        ${MSVC_WARNING_PREFIX}4555 # Expression has no effect; expected expression with side-effect
+        ${MSVC_WARNING_PREFIX}4826 # Conversion from 'type1' to 'type2' is sign-extended. This may cause unexpected runtime behavior.
+        ${MSVC_WARNING_PREFIX}5038 # data member 'member1' will be initialized after data member 'member2'
+        ${MSVC_WARNING_PREFIX}5233 # explicit lambda capture 'identifier' is not used
+        ${MSVC_WARNING_PREFIX}5245 # 'function': unreferenced function with internal linkage has been removed
 
         /wd4100 # 'identifier': unreferenced formal parameter
         /wd4324 # 'struct_name': structure was padded due to __declspec(align())

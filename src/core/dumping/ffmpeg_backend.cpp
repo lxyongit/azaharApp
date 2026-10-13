@@ -151,6 +151,20 @@ static AVPixelFormat GetPixelFormat(AVCodecContext* avctx, const AVPixelFormat* 
     return AV_PIX_FMT_NONE;
 }
 
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+template <typename T>
+static bool GetSupportedCodecConfig(const AVCodecContext* context, const AVCodec* codec,
+                                   AVCodecConfig config, const T*& values) {
+    const void* configs = nullptr;
+    if (avcodec_get_supported_config(context, codec, config, 0, &configs, nullptr) < 0) {
+        LOG_ERROR(Render, "Could not query encoder configuration for {}", codec->name);
+        return false;
+    }
+    values = static_cast<const T*>(configs);
+    return true;
+}
+#endif
+
 bool FFmpegVideoStream::Init(FFmpegMuxer& muxer, const Layout::FramebufferLayout& layout_) {
     InitializeFFmpegLibraries();
 
@@ -180,18 +194,27 @@ bool FFmpegVideoStream::Init(FFmpegMuxer& muxer, const Layout::FramebufferLayout
     codec_context->gop_size = 12;
 
     // Get pixel format for codec
+    const AVPixelFormat* pixel_formats = nullptr;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    if (!GetSupportedCodecConfig(codec_context.get(), codec, AV_CODEC_CONFIG_PIX_FORMAT,
+                                 pixel_formats)) {
+        return false;
+    }
+#else
+    pixel_formats = codec->pix_fmts;
+#endif
     auto options = ToAVDictionary(Settings::values.video_encoder_options);
     auto pixel_format_opt = av_dict_get(options, "pixel_format", nullptr, 0);
     if (pixel_format_opt) {
         sw_pixel_format = av_get_pix_fmt(pixel_format_opt->value);
-    } else if (codec->pix_fmts) {
-        sw_pixel_format = GetPixelFormat(codec_context.get(), codec->pix_fmts);
+    } else if (pixel_formats) {
+        sw_pixel_format = GetPixelFormat(codec_context.get(), pixel_formats);
     } else {
         sw_pixel_format = AV_PIX_FMT_YUV420P;
     }
     if (sw_pixel_format == AV_PIX_FMT_NONE) {
         // This encoder requires HW context configuration.
-        if (!InitHWContext(codec)) {
+        if (!InitHWContext(codec, pixel_formats)) {
             LOG_ERROR(Render, "Failed to initialize HW context");
             return false;
         }
@@ -292,12 +315,16 @@ void FFmpegVideoStream::ProcessFrame(VideoFrame& frame) {
     }
 }
 
-bool FFmpegVideoStream::InitHWContext(const AVCodec* codec) {
-    for (std::size_t i = 0; codec->pix_fmts[i] != AV_PIX_FMT_NONE; ++i) {
+bool FFmpegVideoStream::InitHWContext(const AVCodec* codec, const AVPixelFormat* pixel_formats) {
+    if (!pixel_formats) {
+        LOG_ERROR(Render, "Could not query HW pixel formats");
+        return false;
+    }
+    for (std::size_t i = 0; pixel_formats[i] != AV_PIX_FMT_NONE; ++i) {
         const AVCodecHWConfig* config;
         for (int j = 0;; ++j) {
             config = avcodec_get_hw_config(codec, j);
-            if (!config || config->pix_fmt == codec->pix_fmts[i]) {
+            if (!config || config->pix_fmt == pixel_formats[i]) {
                 break;
             }
         }
@@ -311,7 +338,7 @@ bool FFmpegVideoStream::InitHWContext(const AVCodec* codec) {
             continue;
         }
 
-        codec_context->pix_fmt = codec->pix_fmts[i];
+        codec_context->pix_fmt = pixel_formats[i];
 
         // Create HW device context
         AVBufferRef* hw_device_context;
@@ -359,7 +386,7 @@ bool FFmpegVideoStream::InitHWContext(const AVCodec* codec) {
 
         AVHWFramesContext* hw_frames_context =
             reinterpret_cast<AVHWFramesContext*>(hw_frames_context_ref->data);
-        hw_frames_context->format = codec->pix_fmts[i];
+        hw_frames_context->format = pixel_formats[i];
         hw_frames_context->sw_format = sw_pixel_format;
         hw_frames_context->width = codec_context->width;
         hw_frames_context->height = codec_context->height;
@@ -401,20 +428,28 @@ bool FFmpegVideoStream::InitFilters() {
     }
 
     // Configure buffer sink
-    if (avfilter_graph_create_filter(&sink_context, sink, "out", nullptr, nullptr,
-                                     filter_graph.get()) < 0) {
+    sink_context = avfilter_graph_alloc_filter(filter_graph.get(), sink, "out");
+    if (!sink_context) {
         LOG_ERROR(Render, "Could not create buffer sink");
         return false;
     }
 
-    // Point av_opt_set_int_list to correct functions.
-#define av_int_list_length_for_size av_int_list_length_for_size
-#define av_opt_set_bin av_opt_set_bin
-
-    const AVPixelFormat pix_fmts[] = {sw_pixel_format, AV_PIX_FMT_NONE};
-    if (av_opt_set_int_list(sink_context, "pix_fmts", pix_fmts, AV_PIX_FMT_NONE,
-                            AV_OPT_SEARCH_CHILDREN) < 0) {
+    // Set the format before initialization, which terminates the format array.
+#if LIBAVFILTER_VERSION_MAJOR >= 11
+    const int format_result =
+        av_opt_set_array(sink_context, "pixel_formats", AV_OPT_SEARCH_CHILDREN, 0, 1,
+                         AV_OPT_TYPE_PIXEL_FMT, &sw_pixel_format);
+#else
+    const int format_result =
+        av_opt_set_bin(sink_context, "pix_fmts", reinterpret_cast<const uint8_t*>(&sw_pixel_format),
+                       static_cast<int>(sizeof(sw_pixel_format)), AV_OPT_SEARCH_CHILDREN);
+#endif
+    if (format_result < 0) {
         LOG_ERROR(Render, "Could not set output pixel format");
+        return false;
+    }
+    if (avfilter_init_str(sink_context, nullptr) < 0) {
+        LOG_ERROR(Render, "Could not initialize buffer sink");
         return false;
     }
 
@@ -475,16 +510,29 @@ bool FFmpegAudioStream::Init(FFmpegMuxer& muxer) {
     // Configure audio codec context
     codec_context->codec_type = AVMEDIA_TYPE_AUDIO;
     codec_context->bit_rate = Settings::values.audio_bitrate;
-    if (codec->sample_fmts) {
-        codec_context->sample_fmt = codec->sample_fmts[0];
+    const AVSampleFormat* sample_formats = nullptr;
+    const int* sample_rates = nullptr;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    if (!GetSupportedCodecConfig(codec_context.get(), codec, AV_CODEC_CONFIG_SAMPLE_FORMAT,
+                                 sample_formats) ||
+        !GetSupportedCodecConfig(codec_context.get(), codec, AV_CODEC_CONFIG_SAMPLE_RATE,
+                                 sample_rates)) {
+        return false;
+    }
+#else
+    sample_formats = codec->sample_fmts;
+    sample_rates = codec->supported_samplerates;
+#endif
+    if (sample_formats) {
+        codec_context->sample_fmt = sample_formats[0];
     } else {
         codec_context->sample_fmt = AV_SAMPLE_FMT_S16P;
     }
 
-    if (codec->supported_samplerates) {
-        codec_context->sample_rate = codec->supported_samplerates[0];
+    if (sample_rates) {
+        codec_context->sample_rate = sample_rates[0];
         // Prefer native sample rate if supported
-        const int* ptr = codec->supported_samplerates;
+        const int* ptr = sample_rates;
         while ((*ptr)) {
             if ((*ptr) == AudioCore::native_sample_rate) {
                 codec_context->sample_rate = AudioCore::native_sample_rate;

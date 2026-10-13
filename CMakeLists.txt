@@ -394,8 +394,8 @@ find_package(Threads REQUIRED)
 
 if (ENABLE_FFMPEG)
     include(FindFFmpeg)
-    # Currently, specifically FFmpeg 7.x is required. No older, no newer.
-    find_package(FFmpeg 59 REQUIRED COMPONENTS AVUTIL) # 58 is FFmpeg 6.x, 60 is FFmpeg 8.x
+    # Require FFmpeg 7 or newer (libavutil 59 or newer).
+    find_package(FFmpeg 59 REQUIRED COMPONENTS AVUTIL)
     find_package(FFmpeg REQUIRED COMPONENTS AVCODEC AVFORMAT AVFILTER SWRESAMPLE)
 endif()
 
